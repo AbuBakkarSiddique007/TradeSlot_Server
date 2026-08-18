@@ -1,14 +1,8 @@
 import { Router } from "express";
+import { authRoutes } from "../module/auth/auth.routes";
 
 const router = Router();
 
-router.get("/", (_req, res) => {
-	res.status(200).json({
-		message: "API is ready",
-		endpoints: {
-			health: "/health"
-		}
-	});
-});
+router.use("/auth", authRoutes);
 
 export const indexRoute = router;
