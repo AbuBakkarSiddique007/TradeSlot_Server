@@ -8,5 +8,12 @@
  *
  * 🟢 You can import this file directly.
  */
-export type * from './models/User'
+export type * from './models/Business'
+export type * from './models/Trader'
+export type * from './models/WorkArea'
+export type * from './models/Customer'
+export type * from './models/ChatSession'
+export type * from './models/InboundMessage'
+export type * from './models/Booking'
+export type * from './models/Payment'
 export type * from './commonInputTypes'

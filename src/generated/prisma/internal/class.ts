@@ -20,7 +20,7 @@ const config: runtime.GetPrismaClientConfig = {
   "clientVersion": "7.3.0",
   "engineVersion": "9d6ad21cbbceab97458517b147a6a09ff43aa735",
   "activeProvider": "postgresql",
-  "inlineSchema": "// This is your Prisma schema file,\n// learn more about it in the docs: https://pris.ly/d/prisma-schema\n\n// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?\n// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init\n\ngenerator client {\n  provider = \"prisma-client\"\n  output   = \"../src/generated/prisma\"\n}\n\ndatasource db {\n  provider = \"postgresql\"\n}\n\nmodel User {\n  id    Int     @id @default(autoincrement())\n  email String  @unique\n  name  String?\n}\n",
+  "inlineSchema": "// TradeSlot MVP Database Schema (Prisma 7)\n\ngenerator client {\n  provider = \"prisma-client\"\n  output   = \"../src/generated/prisma\"\n}\n\ndatasource db {\n  provider = \"postgresql\"\n}\n\nenum ChannelType {\n  WHATSAPP\n  WEB_CHATBOT\n}\n\nenum BookingStatus {\n  PENDING\n  OFFERED\n  CONFIRMED\n  PAYMENT_PENDING\n  PAID\n  COMPLETED\n  CANCELLED\n}\n\nenum PaymentStatus {\n  UNPAID\n  PENDING\n  SUCCEEDED\n  FAILED\n  REFUNDED\n}\n\nenum ConversationState {\n  INITIAL\n  AWAITING_SERVICE_DETAILS\n  AWAITING_SLOT_SELECTION\n  OFFERED_SLOT\n  AWAITING_PAYMENT\n  CONFIRMED\n  COMPLETED\n}\n\n// Multi-trader stub: 1 Business has 1..N Traders (Default: 1:1 for MVP)\nmodel Business {\n  id        String   @id @default(uuid())\n  name      String\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n  traders   Trader[]\n}\n\nmodel Trader {\n  id                 String   @id @default(uuid())\n  businessId         String\n  business           Business @relation(fields: [businessId], references: [id], onDelete: Cascade)\n  email              String   @unique\n  passwordHash       String\n  name               String\n  phone              String?\n  stripeAccountId    String?  @unique\n  stripeOnboarded    Boolean  @default(false)\n  workingHoursStart  String   @default(\"08:00\")\n  workingHoursEnd    String   @default(\"18:00\")\n  defaultJobDuration Int      @default(60) // minutes\n  defaultBufferTime  Int      @default(30) // minutes travel buffer\n  createdAt          DateTime @default(now())\n  updatedAt          DateTime @updatedAt\n\n  workAreas WorkArea[]\n  bookings  Booking[]\n\n  @@index([businessId])\n}\n\nmodel WorkArea {\n  id          String   @id @default(uuid())\n  traderId    String\n  trader      Trader   @relation(fields: [traderId], references: [id], onDelete: Cascade)\n  date        DateTime @db.Date\n  zoneName    String // e.g. \"North London\", \"Postcode: SW1\"\n  postalCodes String[] // e.g. [\"SW1\", \"W1\"]\n  createdAt   DateTime @default(now())\n  updatedAt   DateTime @updatedAt\n\n  @@unique([traderId, date])\n  @@index([traderId, date])\n}\n\nmodel Customer {\n  id        String   @id @default(uuid())\n  name      String?\n  phone     String?  @unique\n  email     String?\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  sessions ChatSession[]\n  bookings Booking[]\n}\n\nmodel ChatSession {\n  id              String            @id @default(uuid())\n  customerId      String?\n  customer        Customer?         @relation(fields: [customerId], references: [id], onDelete: SetNull)\n  senderRef       String // Phone number for WhatsApp, session UUID for Web Chatbot\n  channelType     ChannelType\n  state           ConversationState @default(INITIAL)\n  metadata        Json? // Context: requestedService, selectedSlot, activeTraderId\n  lastInteraction DateTime          @default(now())\n  createdAt       DateTime          @default(now())\n\n  messages InboundMessage[]\n\n  @@unique([channelType, senderRef])\n  @@index([senderRef])\n}\n\nmodel InboundMessage {\n  id          String       @id @default(uuid())\n  sessionId   String?\n  session     ChatSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)\n  channelType ChannelType\n  senderRef   String\n  content     String\n  rawPayload  Json?\n  timestamp   DateTime     @default(now())\n\n  @@index([channelType, senderRef])\n}\n\nmodel Booking {\n  id                 String      @id @default(uuid())\n  traderId           String\n  trader             Trader      @relation(fields: [traderId], references: [id], onDelete: Restrict)\n  customerId         String?\n  customer           Customer?   @relation(fields: [customerId], references: [id], onDelete: SetNull)\n  channelType        ChannelType\n  customerRef        String // Phone or session token\n  customerName       String?\n  customerLocation   String // Address / Postcode\n  serviceDescription String\n\n  startTime       DateTime\n  endTime         DateTime\n  bufferMinutes   Int      @default(30)\n  bufferedEndTime DateTime\n\n  status     BookingStatus @default(PENDING)\n  totalPrice Decimal       @db.Decimal(10, 2)\n  feeAmount  Decimal       @db.Decimal(10, 2) // Flat platform fee\n  currency   String        @default(\"gbp\")\n\n  payment   Payment?\n  createdAt DateTime @default(now())\n  updatedAt DateTime @updatedAt\n\n  @@index([traderId, startTime, endTime])\n  @@index([status])\n}\n\nmodel Payment {\n  id                      String        @id @default(uuid())\n  bookingId               String        @unique\n  booking                 Booking       @relation(fields: [bookingId], references: [id], onDelete: Restrict)\n  stripePaymentIntentId   String?       @unique\n  stripeCheckoutSessionId String?       @unique\n  amount                  Decimal       @db.Decimal(10, 2)\n  applicationFeeAmount    Decimal       @db.Decimal(10, 2)\n  traderPayoutAmount      Decimal       @db.Decimal(10, 2)\n  currency                String        @default(\"gbp\")\n  status                  PaymentStatus @default(UNPAID)\n  stripeReceiptUrl        String?\n  createdAt               DateTime      @default(now())\n  updatedAt               DateTime      @updatedAt\n\n  @@index([stripePaymentIntentId])\n  @@index([status])\n}\n",
   "runtimeDataModel": {
     "models": {},
     "enums": {},
@@ -28,7 +28,7 @@ const config: runtime.GetPrismaClientConfig = {
   }
 }
 
-config.runtimeDataModel = JSON.parse("{\"models\":{\"User\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"Int\"},{\"name\":\"email\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"name\",\"kind\":\"scalar\",\"type\":\"String\"}],\"dbName\":null}},\"enums\":{},\"types\":{}}")
+config.runtimeDataModel = JSON.parse("{\"models\":{\"Business\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"name\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"updatedAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"traders\",\"kind\":\"object\",\"type\":\"Trader\",\"relationName\":\"BusinessToTrader\"}],\"dbName\":null},\"Trader\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"businessId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"business\",\"kind\":\"object\",\"type\":\"Business\",\"relationName\":\"BusinessToTrader\"},{\"name\":\"email\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"passwordHash\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"name\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"phone\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"stripeAccountId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"stripeOnboarded\",\"kind\":\"scalar\",\"type\":\"Boolean\"},{\"name\":\"workingHoursStart\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"workingHoursEnd\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"defaultJobDuration\",\"kind\":\"scalar\",\"type\":\"Int\"},{\"name\":\"defaultBufferTime\",\"kind\":\"scalar\",\"type\":\"Int\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"updatedAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"workAreas\",\"kind\":\"object\",\"type\":\"WorkArea\",\"relationName\":\"TraderToWorkArea\"},{\"name\":\"bookings\",\"kind\":\"object\",\"type\":\"Booking\",\"relationName\":\"BookingToTrader\"}],\"dbName\":null},\"WorkArea\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"traderId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"trader\",\"kind\":\"object\",\"type\":\"Trader\",\"relationName\":\"TraderToWorkArea\"},{\"name\":\"date\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"zoneName\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"postalCodes\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"updatedAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"}],\"dbName\":null},\"Customer\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"name\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"phone\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"email\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"updatedAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"sessions\",\"kind\":\"object\",\"type\":\"ChatSession\",\"relationName\":\"ChatSessionToCustomer\"},{\"name\":\"bookings\",\"kind\":\"object\",\"type\":\"Booking\",\"relationName\":\"BookingToCustomer\"}],\"dbName\":null},\"ChatSession\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"customerId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"customer\",\"kind\":\"object\",\"type\":\"Customer\",\"relationName\":\"ChatSessionToCustomer\"},{\"name\":\"senderRef\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"channelType\",\"kind\":\"enum\",\"type\":\"ChannelType\"},{\"name\":\"state\",\"kind\":\"enum\",\"type\":\"ConversationState\"},{\"name\":\"metadata\",\"kind\":\"scalar\",\"type\":\"Json\"},{\"name\":\"lastInteraction\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"messages\",\"kind\":\"object\",\"type\":\"InboundMessage\",\"relationName\":\"ChatSessionToInboundMessage\"}],\"dbName\":null},\"InboundMessage\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"sessionId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"session\",\"kind\":\"object\",\"type\":\"ChatSession\",\"relationName\":\"ChatSessionToInboundMessage\"},{\"name\":\"channelType\",\"kind\":\"enum\",\"type\":\"ChannelType\"},{\"name\":\"senderRef\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"content\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"rawPayload\",\"kind\":\"scalar\",\"type\":\"Json\"},{\"name\":\"timestamp\",\"kind\":\"scalar\",\"type\":\"DateTime\"}],\"dbName\":null},\"Booking\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"traderId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"trader\",\"kind\":\"object\",\"type\":\"Trader\",\"relationName\":\"BookingToTrader\"},{\"name\":\"customerId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"customer\",\"kind\":\"object\",\"type\":\"Customer\",\"relationName\":\"BookingToCustomer\"},{\"name\":\"channelType\",\"kind\":\"enum\",\"type\":\"ChannelType\"},{\"name\":\"customerRef\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"customerName\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"customerLocation\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"serviceDescription\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"startTime\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"endTime\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"bufferMinutes\",\"kind\":\"scalar\",\"type\":\"Int\"},{\"name\":\"bufferedEndTime\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"status\",\"kind\":\"enum\",\"type\":\"BookingStatus\"},{\"name\":\"totalPrice\",\"kind\":\"scalar\",\"type\":\"Decimal\"},{\"name\":\"feeAmount\",\"kind\":\"scalar\",\"type\":\"Decimal\"},{\"name\":\"currency\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"payment\",\"kind\":\"object\",\"type\":\"Payment\",\"relationName\":\"BookingToPayment\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"updatedAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"}],\"dbName\":null},\"Payment\":{\"fields\":[{\"name\":\"id\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"bookingId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"booking\",\"kind\":\"object\",\"type\":\"Booking\",\"relationName\":\"BookingToPayment\"},{\"name\":\"stripePaymentIntentId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"stripeCheckoutSessionId\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"amount\",\"kind\":\"scalar\",\"type\":\"Decimal\"},{\"name\":\"applicationFeeAmount\",\"kind\":\"scalar\",\"type\":\"Decimal\"},{\"name\":\"traderPayoutAmount\",\"kind\":\"scalar\",\"type\":\"Decimal\"},{\"name\":\"currency\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"status\",\"kind\":\"enum\",\"type\":\"PaymentStatus\"},{\"name\":\"stripeReceiptUrl\",\"kind\":\"scalar\",\"type\":\"String\"},{\"name\":\"createdAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"},{\"name\":\"updatedAt\",\"kind\":\"scalar\",\"type\":\"DateTime\"}],\"dbName\":null}},\"enums\":{},\"types\":{}}")
 
 async function decodeBase64AsWasm(wasmBase64: string): Promise<WebAssembly.Module> {
   const { Buffer } = await import('node:buffer')
@@ -60,8 +60,8 @@ export interface PrismaClientConstructor {
    * @example
    * ```
    * const prisma = new PrismaClient()
-   * // Fetch zero or more Users
-   * const users = await prisma.user.findMany()
+   * // Fetch zero or more Businesses
+   * const businesses = await prisma.business.findMany()
    * ```
    * 
    * Read more in our [docs](https://pris.ly/d/client).
@@ -82,8 +82,8 @@ export interface PrismaClientConstructor {
  * @example
  * ```
  * const prisma = new PrismaClient()
- * // Fetch zero or more Users
- * const users = await prisma.user.findMany()
+ * // Fetch zero or more Businesses
+ * const businesses = await prisma.business.findMany()
  * ```
  * 
  * Read more in our [docs](https://pris.ly/d/client).
@@ -177,14 +177,84 @@ export interface PrismaClient<
   }>>
 
       /**
-   * `prisma.user`: Exposes CRUD operations for the **User** model.
+   * `prisma.business`: Exposes CRUD operations for the **Business** model.
     * Example usage:
     * ```ts
-    * // Fetch zero or more Users
-    * const users = await prisma.user.findMany()
+    * // Fetch zero or more Businesses
+    * const businesses = await prisma.business.findMany()
     * ```
     */
-  get user(): Prisma.UserDelegate<ExtArgs, { omit: OmitOpts }>;
+  get business(): Prisma.BusinessDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.trader`: Exposes CRUD operations for the **Trader** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more Traders
+    * const traders = await prisma.trader.findMany()
+    * ```
+    */
+  get trader(): Prisma.TraderDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.workArea`: Exposes CRUD operations for the **WorkArea** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more WorkAreas
+    * const workAreas = await prisma.workArea.findMany()
+    * ```
+    */
+  get workArea(): Prisma.WorkAreaDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.customer`: Exposes CRUD operations for the **Customer** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more Customers
+    * const customers = await prisma.customer.findMany()
+    * ```
+    */
+  get customer(): Prisma.CustomerDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.chatSession`: Exposes CRUD operations for the **ChatSession** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more ChatSessions
+    * const chatSessions = await prisma.chatSession.findMany()
+    * ```
+    */
+  get chatSession(): Prisma.ChatSessionDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.inboundMessage`: Exposes CRUD operations for the **InboundMessage** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more InboundMessages
+    * const inboundMessages = await prisma.inboundMessage.findMany()
+    * ```
+    */
+  get inboundMessage(): Prisma.InboundMessageDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.booking`: Exposes CRUD operations for the **Booking** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more Bookings
+    * const bookings = await prisma.booking.findMany()
+    * ```
+    */
+  get booking(): Prisma.BookingDelegate<ExtArgs, { omit: OmitOpts }>;
+
+  /**
+   * `prisma.payment`: Exposes CRUD operations for the **Payment** model.
+    * Example usage:
+    * ```ts
+    * // Fetch zero or more Payments
+    * const payments = await prisma.payment.findMany()
+    * ```
+    */
+  get payment(): Prisma.PaymentDelegate<ExtArgs, { omit: OmitOpts }>;
 }
 
 export function getPrismaClientClass(): PrismaClientConstructor {

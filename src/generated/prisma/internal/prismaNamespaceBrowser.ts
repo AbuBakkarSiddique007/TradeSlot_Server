@@ -51,7 +51,14 @@ export const AnyNull = runtime.AnyNull
 
 
 export const ModelName = {
-  User: 'User'
+  Business: 'Business',
+  Trader: 'Trader',
+  WorkArea: 'WorkArea',
+  Customer: 'Customer',
+  ChatSession: 'ChatSession',
+  InboundMessage: 'InboundMessage',
+  Booking: 'Booking',
+  Payment: 'Payment'
 } as const
 
 export type ModelName = (typeof ModelName)[keyof typeof ModelName]
@@ -70,13 +77,128 @@ export const TransactionIsolationLevel = runtime.makeStrictEnum({
 export type TransactionIsolationLevel = (typeof TransactionIsolationLevel)[keyof typeof TransactionIsolationLevel]
 
 
-export const UserScalarFieldEnum = {
+export const BusinessScalarFieldEnum = {
   id: 'id',
-  email: 'email',
-  name: 'name'
+  name: 'name',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
 } as const
 
-export type UserScalarFieldEnum = (typeof UserScalarFieldEnum)[keyof typeof UserScalarFieldEnum]
+export type BusinessScalarFieldEnum = (typeof BusinessScalarFieldEnum)[keyof typeof BusinessScalarFieldEnum]
+
+
+export const TraderScalarFieldEnum = {
+  id: 'id',
+  businessId: 'businessId',
+  email: 'email',
+  passwordHash: 'passwordHash',
+  name: 'name',
+  phone: 'phone',
+  stripeAccountId: 'stripeAccountId',
+  stripeOnboarded: 'stripeOnboarded',
+  workingHoursStart: 'workingHoursStart',
+  workingHoursEnd: 'workingHoursEnd',
+  defaultJobDuration: 'defaultJobDuration',
+  defaultBufferTime: 'defaultBufferTime',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type TraderScalarFieldEnum = (typeof TraderScalarFieldEnum)[keyof typeof TraderScalarFieldEnum]
+
+
+export const WorkAreaScalarFieldEnum = {
+  id: 'id',
+  traderId: 'traderId',
+  date: 'date',
+  zoneName: 'zoneName',
+  postalCodes: 'postalCodes',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type WorkAreaScalarFieldEnum = (typeof WorkAreaScalarFieldEnum)[keyof typeof WorkAreaScalarFieldEnum]
+
+
+export const CustomerScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  phone: 'phone',
+  email: 'email',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type CustomerScalarFieldEnum = (typeof CustomerScalarFieldEnum)[keyof typeof CustomerScalarFieldEnum]
+
+
+export const ChatSessionScalarFieldEnum = {
+  id: 'id',
+  customerId: 'customerId',
+  senderRef: 'senderRef',
+  channelType: 'channelType',
+  state: 'state',
+  metadata: 'metadata',
+  lastInteraction: 'lastInteraction',
+  createdAt: 'createdAt'
+} as const
+
+export type ChatSessionScalarFieldEnum = (typeof ChatSessionScalarFieldEnum)[keyof typeof ChatSessionScalarFieldEnum]
+
+
+export const InboundMessageScalarFieldEnum = {
+  id: 'id',
+  sessionId: 'sessionId',
+  channelType: 'channelType',
+  senderRef: 'senderRef',
+  content: 'content',
+  rawPayload: 'rawPayload',
+  timestamp: 'timestamp'
+} as const
+
+export type InboundMessageScalarFieldEnum = (typeof InboundMessageScalarFieldEnum)[keyof typeof InboundMessageScalarFieldEnum]
+
+
+export const BookingScalarFieldEnum = {
+  id: 'id',
+  traderId: 'traderId',
+  customerId: 'customerId',
+  channelType: 'channelType',
+  customerRef: 'customerRef',
+  customerName: 'customerName',
+  customerLocation: 'customerLocation',
+  serviceDescription: 'serviceDescription',
+  startTime: 'startTime',
+  endTime: 'endTime',
+  bufferMinutes: 'bufferMinutes',
+  bufferedEndTime: 'bufferedEndTime',
+  status: 'status',
+  totalPrice: 'totalPrice',
+  feeAmount: 'feeAmount',
+  currency: 'currency',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type BookingScalarFieldEnum = (typeof BookingScalarFieldEnum)[keyof typeof BookingScalarFieldEnum]
+
+
+export const PaymentScalarFieldEnum = {
+  id: 'id',
+  bookingId: 'bookingId',
+  stripePaymentIntentId: 'stripePaymentIntentId',
+  stripeCheckoutSessionId: 'stripeCheckoutSessionId',
+  amount: 'amount',
+  applicationFeeAmount: 'applicationFeeAmount',
+  traderPayoutAmount: 'traderPayoutAmount',
+  currency: 'currency',
+  status: 'status',
+  stripeReceiptUrl: 'stripeReceiptUrl',
+  createdAt: 'createdAt',
+  updatedAt: 'updatedAt'
+} as const
+
+export type PaymentScalarFieldEnum = (typeof PaymentScalarFieldEnum)[keyof typeof PaymentScalarFieldEnum]
 
 
 export const SortOrder = {
@@ -85,6 +207,14 @@ export const SortOrder = {
 } as const
 
 export type SortOrder = (typeof SortOrder)[keyof typeof SortOrder]
+
+
+export const NullableJsonNullValueInput = {
+  DbNull: DbNull,
+  JsonNull: JsonNull
+} as const
+
+export type NullableJsonNullValueInput = (typeof NullableJsonNullValueInput)[keyof typeof NullableJsonNullValueInput]
 
 
 export const QueryMode = {
@@ -101,4 +231,13 @@ export const NullsOrder = {
 } as const
 
 export type NullsOrder = (typeof NullsOrder)[keyof typeof NullsOrder]
+
+
+export const JsonNullValueFilter = {
+  DbNull: DbNull,
+  JsonNull: JsonNull,
+  AnyNull: AnyNull
+} as const
+
+export type JsonNullValueFilter = (typeof JsonNullValueFilter)[keyof typeof JsonNullValueFilter]
 

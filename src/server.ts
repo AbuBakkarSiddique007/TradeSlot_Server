@@ -28,6 +28,7 @@ const bootstrap = async () => {
     process.on("SIGTERM", () => {
       void shutdown("SIGTERM");
     });
+    
   } catch (error) {
     console.error("Failed to start the server:", error);
     process.exit(1);

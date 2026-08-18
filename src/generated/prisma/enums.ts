@@ -9,7 +9,46 @@
 * 🟢 You can import this file directly.
 */
 
+export const ChannelType = {
+  WHATSAPP: 'WHATSAPP',
+  WEB_CHATBOT: 'WEB_CHATBOT'
+} as const
+
+export type ChannelType = (typeof ChannelType)[keyof typeof ChannelType]
 
 
-// This file is empty because there are no enums in the schema.
-export {}
+export const BookingStatus = {
+  PENDING: 'PENDING',
+  OFFERED: 'OFFERED',
+  CONFIRMED: 'CONFIRMED',
+  PAYMENT_PENDING: 'PAYMENT_PENDING',
+  PAID: 'PAID',
+  COMPLETED: 'COMPLETED',
+  CANCELLED: 'CANCELLED'
+} as const
+
+export type BookingStatus = (typeof BookingStatus)[keyof typeof BookingStatus]
+
+
+export const PaymentStatus = {
+  UNPAID: 'UNPAID',
+  PENDING: 'PENDING',
+  SUCCEEDED: 'SUCCEEDED',
+  FAILED: 'FAILED',
+  REFUNDED: 'REFUNDED'
+} as const
+
+export type PaymentStatus = (typeof PaymentStatus)[keyof typeof PaymentStatus]
+
+
+export const ConversationState = {
+  INITIAL: 'INITIAL',
+  AWAITING_SERVICE_DETAILS: 'AWAITING_SERVICE_DETAILS',
+  AWAITING_SLOT_SELECTION: 'AWAITING_SLOT_SELECTION',
+  OFFERED_SLOT: 'OFFERED_SLOT',
+  AWAITING_PAYMENT: 'AWAITING_PAYMENT',
+  CONFIRMED: 'CONFIRMED',
+  COMPLETED: 'COMPLETED'
+} as const
+
+export type ConversationState = (typeof ConversationState)[keyof typeof ConversationState]
