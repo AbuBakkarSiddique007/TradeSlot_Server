@@ -2,9 +2,13 @@ node_modules
 dist
 build
 
+# Env files
 .env
 .env.*
 !.env.example
 
+# Prisma generated client
+src/generated/prisma
 
-/generated/prisma
+# Local test/debug artifacts
+/tmp/tradeslot-mock-wa-outbox.log
