@@ -3,8 +3,9 @@ import { prisma } from "../lib/prisma";
 import { BookingStatus, ConversationState } from "../../generated/prisma/enums";
 import { addMinutes, dateToMinutes, formatHHmm, startOfDay } from "./time";
 import { getAvailableSlots, isSlotAvailable } from "./bufferEngine";
-import { IReplyMessage, NormalizedMessage, ReplyOption } from "./channels/types";
+import { IReplyMessage, NormalizedMessage, ReplyOption, ButtonOption } from "./channels/types";
 import { InboundContext, updateSessionState } from "./inbox/inbound.service";
+import { createBookingCheckout, isStripeConfigured, StripeNotConfiguredError } from "./stripeService";
 
 export interface BookingEngineResult {
     reply: IReplyMessage;
@@ -66,7 +67,9 @@ const mergeServiceDetails = (msg: NormalizedMessage, metadata: Record<string, an
 };
 
 const pickTrader = async (): Promise<{ id: string; defaultJobDuration: number; defaultBufferTime: number } | null> => {
+
     const trader = await prisma.trader.findFirst({
+        where: { stripeOnboarded: true, stripeAccountId: { not: null } },
         orderBy: { createdAt: "asc" },
         select: {
             id: true,
@@ -74,7 +77,16 @@ const pickTrader = async (): Promise<{ id: string; defaultJobDuration: number; d
             defaultBufferTime: true,
         },
     });
-    return trader;
+
+    if (trader) return trader;
+    return prisma.trader.findFirst({
+        orderBy: { createdAt: "asc" },
+        select: {
+            id: true,
+            defaultJobDuration: true,
+            defaultBufferTime: true,
+        },
+    });
 };
 
 export const handleIncomingMessage = async (
@@ -212,10 +224,24 @@ export const handleIncomingMessage = async (
                 startTime: start,
             });
 
+            const checkout = await resolveCheckoutForBooking(booking.id);
+
             await updateSessionState(sessionId, ConversationState.AWAITING_PAYMENT, {
                 ...metadata,
                 bookingId: booking.id,
             });
+
+            const startLabel = formatHHmm(dateToMinutes(booking.startTime));
+            const endLabel = formatHHmm(dateToMinutes(booking.endTime));
+            const buttons: ButtonOption[] = checkout.url
+                ? [
+                    {
+                        id: "checkout",
+                        label: "Pay now",
+                        description: checkout.url,
+                    },
+                ]
+                : [];
 
             return {
                 sessionId,
@@ -223,8 +249,15 @@ export const handleIncomingMessage = async (
                 bookingId: booking.id,
                 newState: ConversationState.AWAITING_PAYMENT,
                 reply: {
-                    text: `Great — I've held ${formatHHmm(dateToMinutes(booking.startTime))} – ${formatHHmm(dateToMinutes(booking.endTime))} for you. We'll send a secure payment link in a moment.`,
-                    metadata: { bookingId: booking.id },
+                    text: checkout.url
+                        ? `Great — I've held ${startLabel} – ${endLabel} for you. Tap "Pay now" below to confirm the booking.`
+                        : `Great — I've held ${startLabel} – ${endLabel} for you. Payment is not configured yet, so we'll send the link separately.`,
+                    ...(buttons.length > 0 ? { buttons } : {}),
+                    metadata: {
+                        bookingId: booking.id,
+                        ...(checkout.url ? { checkoutUrl: checkout.url } : {}),
+                        ...(checkout.warning ? { checkoutWarning: checkout.warning } : {}),
+                    },
                 },
             };
         }
@@ -281,6 +314,7 @@ const offerSlotsReply = async (
     messageId: string,
     metadata: Record<string, any>,
 ): Promise<BookingEngineResult> => {
+
     const trader = await pickTrader();
     if (!trader) {
         return {
@@ -292,8 +326,10 @@ const offerSlotsReply = async (
             },
         };
     }
+
     const availability = await getAvailableSlots(trader.id, startOfDay(new Date()));
     const chips = buildSlotChips(availability.slots);
+
     if (chips.length === 0) {
         return {
             sessionId,
@@ -325,7 +361,9 @@ const offerSlotsReply = async (
 };
 
 const slotsOnlyReply = async (): Promise<{ options?: ReplyOption[]; metadata?: Record<string, any> }> => {
+
     const trader = await pickTrader();
+
     if (!trader) return {};
     const availability = await getAvailableSlots(trader.id, startOfDay(new Date()));
     return {
@@ -341,16 +379,53 @@ interface CreatePendingBookingInput {
     startTime: Date;
 }
 
+interface CheckoutResolution {
+    url: string | null;
+    warning?: string;
+}
+
+const resolveCheckoutForBooking = async (bookingId: string): Promise<CheckoutResolution> => {
+    if (!isStripeConfigured()) {
+        return {
+            url: null,
+            warning: "Stripe is not configured on the server. The trader must set STRIPE_SECRET_KEY before payments can be taken.",
+        };
+    }
+    try {
+        const checkout = await createBookingCheckout(bookingId);
+        return { url: checkout.url };
+
+    } catch (err) {
+
+        if (err instanceof StripeNotConfiguredError) {
+            return {
+                url: null,
+                warning: "Stripe is not configured on the server. The trader must set STRIPE_SECRET_KEY before payments can be taken.",
+            };
+        }
+
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[bookingEngine] createBookingCheckout failed for ${bookingId}: ${message}`);
+
+        return {
+            url: null,
+            warning: `We could not start the payment session: ${message}. The booking is still held — we'll retry the link shortly.`,
+        };
+    }
+};
+
 const createPendingBooking = async ({
     traderId,
     msg,
     metadata,
     startTime,
 }: CreatePendingBookingInput) => {
+    
     const trader = await prisma.trader.findUniqueOrThrow({
         where: { id: traderId },
         select: { defaultJobDuration: true, defaultBufferTime: true },
     });
+
     const endTime = addMinutes(startTime, trader.defaultJobDuration);
     const bufferedEndTime = addMinutes(endTime, trader.defaultBufferTime);
     const customerName =
