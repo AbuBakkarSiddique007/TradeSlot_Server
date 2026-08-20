@@ -15,11 +15,20 @@ export class WebChatbotAdapter implements IChannelAdapter {
     }
 
     const customerName = pickString(body.customerName, body.name);
+    const customerLocation = pickString(body.customerLocation, body.location, body.postcode);
+    
+    const serviceDescription = pickString(
+      body.serviceDescription,
+      body.service,
+      body.job,
+    );
 
     return {
       channelType: ChannelType.WEB_CHATBOT,
       senderRef,
       customerName,
+      customerLocation,
+      serviceDescription,
       content,
       timestamp: new Date(),
       rawPayload: req.body,

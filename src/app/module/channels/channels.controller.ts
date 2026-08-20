@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { getChannels } from "../../services/channels";
 import { ingestInboundMessage } from "../../services/inbox/inbound.service";
+import { handleIncomingMessage } from "../../services/bookingEngine";
 
 const receiveWebchat = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -15,20 +16,20 @@ const receiveWebchat = async (req: Request, res: Response, next: NextFunction) =
     }
 
     const ctx = await ingestInboundMessage(normalized);
-
-    const replyText = bookingEngineReply();
+    const result = await handleIncomingMessage(normalized, ctx);
 
     return res.status(200).json({
       success: true,
-      sessionId: ctx.sessionId,
-      messageId: ctx.messageId,
-      reply: { text: replyText },
+      sessionId: result.sessionId,
+      messageId: result.messageId,
+      state: result.newState,
+      bookingId: result.bookingId,
+      reply: result.reply,
     });
   } catch (error) {
     return next(error);
   }
 };
-
 
 const receiveWhatsApp = async (req: Request, res: Response, next: NextFunction) => {
   try {
@@ -40,25 +41,21 @@ const receiveWhatsApp = async (req: Request, res: Response, next: NextFunction) 
     }
 
     const ctx = await ingestInboundMessage(normalized);
+    const result = await handleIncomingMessage(normalized, ctx);
 
-    const replyText = bookingEngineReply();
-
-    await adapter.sendReply(normalized.senderRef, { text: replyText });
+    await adapter.sendReply(normalized.senderRef, result.reply);
 
     return res.status(200).json({
       success: true,
-      sessionId: ctx.sessionId,
-      messageId: ctx.messageId,
-      reply: { text: replyText },
+      sessionId: result.sessionId,
+      messageId: result.messageId,
+      state: result.newState,
+      bookingId: result.bookingId,
+      reply: result.reply,
     });
   } catch (error) {
     return next(error);
   }
-};
-
-
-const bookingEngineReply = (): string => {
-  return "Thanks! We've received your message and will be in touch shortly.";
 };
 
 export const channelsController = {

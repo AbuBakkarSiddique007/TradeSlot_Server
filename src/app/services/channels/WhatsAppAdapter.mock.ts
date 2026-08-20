@@ -50,8 +50,8 @@ export class MockWhatsAppAdapter implements IChannelAdapter {
 
   async sendReply(senderRef: string, reply: IReplyMessage): Promise<void> {
     const line = `[MOCK-WA → ${senderRef}] ${reply.text}${
-      reply.options?.buttons?.length
-        ? " [buttons: " + reply.options.buttons.map((b) => b.label).join(", ") + "]"
+      reply.buttons?.length
+        ? " [buttons: " + reply.buttons.map((b) => b.label).join(", ") + "]"
         : ""
     }\n`;
     process.stdout.write(line);
