@@ -8,7 +8,12 @@ import {
   ITraderAuthPayload,
 } from "./auth.interface";
 
-const JWT_SECRET = process.env.JWT_SECRET || "tradeslot_fallback_secret";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is not set. Configure it in the environment before starting the server.");
+}
+
 const SALT_ROUNDS = 10;
 
 const registerTrader = async (data: IRegisterTraderInput): Promise<IAuthResponse> => {

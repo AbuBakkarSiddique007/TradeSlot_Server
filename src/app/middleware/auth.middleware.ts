@@ -4,7 +4,11 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { ITraderAuthPayload } from "../module/auth/auth.interface";
 
-const JWT_SECRET = process.env.JWT_SECRET || "tradeslot_fallback_secret";
+const JWT_SECRET = process.env.JWT_SECRET;
+
+if (!JWT_SECRET) {
+  throw new Error("JWT_SECRET is not set. Configure it in the environment before starting the server.");
+}
 
 export interface IAuthRequest extends Request {
   trader?: ITraderAuthPayload;
@@ -30,7 +34,7 @@ const requireTraderAuth = (req: IAuthRequest, res: Response, next: NextFunction)
       });
     }
 
-    const decoded = jwt.verify(token, JWT_SECRET) as ITraderAuthPayload;
+    const decoded = jwt.verify(token, JWT_SECRET as string) as ITraderAuthPayload;
 
     req.trader = decoded;
     next();
