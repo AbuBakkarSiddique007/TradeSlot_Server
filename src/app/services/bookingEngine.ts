@@ -22,13 +22,6 @@ const FEE_FALLBACK_GBP = "0.00";
 
 const greet = (name?: string) => (name ? `Hi ${name}, ` : "Hi, ");
 
-const POSTCODE_REGEX = /^[A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2}$/i;
-
-const looksLikePostcode = (text: string): boolean => {
-    if (!text) return false;
-    return POSTCODE_REGEX.test(text.trim());
-};
-
 const buildSlotChips = (slots: Array<{ start: Date; end: Date }>): ReplyOption[] => {
     return slots.slice(0, SLOT_CHIP_LIMIT).map((s) => ({
         id: s.start.toISOString(),
@@ -37,9 +30,57 @@ const buildSlotChips = (slots: Array<{ start: Date; end: Date }>): ReplyOption[]
     }));
 };
 
+const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
+const AREA_KEYWORDS_REGEX = /\b(GEC|Khulshi|Agrabad|Nasirabad|Halishahar|Panchlaish|Muradpur|Bahaddarhat|London|Battersea|Clapham|Islington|Camden|Manchester|Salford|Birmingham|Westminster)\b/i;
+const GENERIC_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?|\d{4})\b/i;
+
+const extractFromText = (text: string) => {
+    if (!text) return { location: null, service: null };
+    const trimmed = text.trim();
+
+
+    const ukMatch = trimmed.match(UK_POSTCODE_REGEX);
+    if (ukMatch && ukMatch[1]) {
+        const loc = ukMatch[1].trim();
+        const srv = trimmed
+            .replace(ukMatch[0], "")
+            .replace(/\b(at|in|near|postcode|address|location|for)\b/gi, "")
+            .replace(/,\s*$/, "")
+            .trim();
+        return { location: loc, service: srv.length > 2 ? srv : null };
+    }
+
+
+    const areaMatch = trimmed.match(AREA_KEYWORDS_REGEX);
+    if (areaMatch && areaMatch[1]) {
+        const loc = areaMatch[1].trim();
+        const srv = trimmed
+            .replace(areaMatch[0], "")
+            .replace(/\b(at|in|near|postcode|address|location|for)\b/gi, "")
+            .replace(/,\s*$/, "")
+            .trim();
+        return { location: loc, service: srv.length > 2 ? srv : null };
+    }
+
+
+    const prefixMatch = trimmed.match(GENERIC_POSTCODE_REGEX);
+    if (prefixMatch && prefixMatch[1] && /\b(at|in|near)\s+/i.test(trimmed)) {
+        const loc = prefixMatch[1].trim();
+        const srv = trimmed
+            .replace(prefixMatch[0], "")
+            .replace(/\b(at|in|near|postcode|address|location|for)\b/gi, "")
+            .replace(/,\s*$/, "")
+            .trim();
+        return { location: loc, service: srv.length > 2 ? srv : null };
+    }
+
+    return { location: null, service: null };
+};
+
 const hasServiceDetails = (msg: NormalizedMessage, metadata: Record<string, any> | null) => {
-    const inlineLocation = msg.customerLocation?.trim();
-    const inlineService = msg.serviceDescription?.trim();
+    const extracted = extractFromText(msg.content);
+    const inlineLocation = msg.customerLocation?.trim() || extracted.location;
+    const inlineService = msg.serviceDescription?.trim() || extracted.service;
     const metaLocation = (metadata?.customerLocation as string | undefined)?.trim();
     const metaService = (metadata?.serviceDescription as string | undefined)?.trim();
 
@@ -52,17 +93,20 @@ const hasServiceDetails = (msg: NormalizedMessage, metadata: Record<string, any>
 };
 
 const mergeServiceDetails = (msg: NormalizedMessage, metadata: Record<string, any> | null) => {
+    const extracted = extractFromText(msg.content);
     return {
         customerName: msg.customerName ?? (metadata?.customerName as string | undefined),
         customerLocation:
             msg.customerLocation?.trim() ??
+            extracted.location ??
             (metadata?.customerLocation as string | undefined) ??
             null,
 
         serviceDescription:
             msg.serviceDescription?.trim() ??
+            extracted.service ??
             (metadata?.serviceDescription as string | undefined) ??
-            null,
+            (msg.content.trim().length > 3 && !extracted.location ? msg.content.trim() : null),
     };
 };
 
@@ -141,17 +185,14 @@ export const handleIncomingMessage = async (
             const nextMetadata: Record<string, any> = { ...details };
 
             if (lastAskedFor === "location") {
-                if (inlineLocation) {
-                    nextMetadata.customerLocation = inlineLocation;
-                } else if (looksLikePostcode(trimmedContent)) {
+                if (inlineLocation || details.customerLocation) {
+                    nextMetadata.customerLocation = inlineLocation || details.customerLocation;
+                } else if (trimmedContent) {
                     nextMetadata.customerLocation = trimmedContent;
-                } else {
-                    nextMetadata.serviceDescription = trimmedContent || nextMetadata.serviceDescription;
                 }
-
             } else {
-                if (inlineService) {
-                    nextMetadata.serviceDescription = inlineService;
+                if (inlineService || details.serviceDescription) {
+                    nextMetadata.serviceDescription = inlineService || details.serviceDescription;
                 } else if (trimmedContent) {
                     nextMetadata.serviceDescription = trimmedContent;
                 }
