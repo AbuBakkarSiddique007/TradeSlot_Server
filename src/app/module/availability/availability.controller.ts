@@ -2,6 +2,7 @@ import { Response, NextFunction } from "express";
 import { getAvailableSlots } from "../../services/bufferEngine";
 import { formatHHmm } from "../../services/time";
 import { IAuthRequest } from "../../middleware/auth.middleware";
+import { prisma } from "../../lib/prisma";
 
 const getAvailability = async (req: IAuthRequest, res: Response, next: NextFunction) => {
     try {
@@ -42,6 +43,27 @@ const getAvailability = async (req: IAuthRequest, res: Response, next: NextFunct
             parsedBuffer,
         );
 
+        const [y, m, d] = result.date.split("-").map(Number);
+        const dayStart = new Date(y, m - 1, d, 0, 0, 0, 0);
+        const dayEnd = new Date(y, m - 1, d, 23, 59, 59, 999);
+
+        const bookings = await prisma.booking.findMany({
+            where: {
+                traderId,
+                startTime: { lt: dayEnd },
+                bufferedEndTime: { gt: dayStart },
+            },
+            include: {
+                payment: {
+                    select: {
+                        status: true,
+                        amount: true,
+                    },
+                },
+            },
+            orderBy: { startTime: "asc" },
+        });
+
         return res.status(200).json({
             success: true,
             traderId: result.traderId,
@@ -60,6 +82,20 @@ const getAvailability = async (req: IAuthRequest, res: Response, next: NextFunct
             durationMinutes: result.durationMinutes,
             bufferMinutes: result.bufferMinutes,
             slotStepMinutes: result.slotStepMinutes,
+            bookings: bookings.map((b) => ({
+                id: b.id,
+                customerName: b.customerName || "Customer",
+                customerLocation: b.customerLocation,
+                serviceDescription: b.serviceDescription,
+                channelType: b.channelType === "WHATSAPP" ? "whatsapp" : "webchat",
+                startTime: b.startTime.toISOString(),
+                endTime: b.endTime.toISOString(),
+                bufferMinutes: b.bufferMinutes,
+                bufferedEndTime: b.bufferedEndTime.toISOString(),
+                status: b.status.toLowerCase(),
+                totalPrice: Number(b.totalPrice) || 0,
+                paymentStatus: b.payment?.status?.toLowerCase() || "pending",
+            })),
             occupied: result.occupied.map((b) => ({
                 startTime: b.startTime.toISOString(),
                 endTime: b.endTime.toISOString(),
