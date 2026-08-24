@@ -56,4 +56,5 @@ export const setTimeOnDate = (date: Date, hhmm: string): Date => {
     return d;
 };
 
-export const SLOT_STEP_MINUTES = 15;
+export const SLOT_STEP_MINUTES = 30;
+
