@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import { prisma } from "../../lib/prisma";
+import { syncTraderStripeStatus } from "../../services/stripeService";
 import {
   IAuthResponse,
   ILoginTraderInput,
@@ -125,7 +126,37 @@ const loginTrader = async (data: ILoginTraderInput): Promise<IAuthResponse> => {
   };
 };
 
+const getTraderById = async (traderId: string) => {
+  const trader = await prisma.trader.findUniqueOrThrow({
+    where: { id: traderId },
+    include: { business: true },
+  });
+
+  if (trader.stripeAccountId && !trader.stripeOnboarded) {
+    const isNowOnboarded = await syncTraderStripeStatus(trader.id);
+    if (isNowOnboarded) {
+      trader.stripeOnboarded = true;
+    }
+  }
+
+  return {
+    id: trader.id,
+    name: trader.name,
+    email: trader.email,
+    phone: trader.phone,
+    businessId: trader.businessId,
+    businessName: trader.business.name,
+    stripeAccountId: trader.stripeAccountId,
+    stripeOnboarded: trader.stripeOnboarded,
+    workingHoursStart: trader.workingHoursStart,
+    workingHoursEnd: trader.workingHoursEnd,
+    defaultBufferTime: trader.defaultBufferTime,
+    defaultJobDuration: trader.defaultJobDuration,
+  };
+};
+
 export const authService = {
   registerTrader,
   loginTrader,
+  getTraderById,
 };

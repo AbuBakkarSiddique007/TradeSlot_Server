@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { Request, Response, NextFunction } from "express";
+import { IAuthRequest } from "../../middleware/auth.middleware";
 import { authService } from "./auth.service";
 
 const register = async (req: Request, res: Response, next: NextFunction) => {
@@ -76,7 +77,21 @@ const login = async (req: Request, res: Response, next: NextFunction) => {
   }
 };
 
+const getMe = async (req: IAuthRequest, res: Response, next: NextFunction) => {
+  try {
+    const traderId = req.trader?.traderId;
+    if (!traderId) {
+      return res.status(401).json({ success: false, message: "Unauthorized." });
+    }
+    const result = await authService.getTraderById(traderId);
+    return res.status(200).json({ success: true, data: result });
+  } catch (error: any) {
+    return next(error);
+  }
+};
+
 export const authController = {
   register,
   login,
+  getMe,
 };

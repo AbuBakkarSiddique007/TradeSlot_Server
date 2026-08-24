@@ -28,7 +28,7 @@ const getAvailability = async (req: IAuthRequest, res: Response, next: NextFunct
                 .status(400)
                 .json({ success: false, message: "Invalid duration (minutes, positive integer)." });
         }
-        
+
         if (parsedBuffer !== undefined && (Number.isNaN(parsedBuffer) || parsedBuffer < 0)) {
             return res
                 .status(400)

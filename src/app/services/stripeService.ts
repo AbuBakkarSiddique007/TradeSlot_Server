@@ -5,7 +5,7 @@ import { PaymentStatus, BookingStatus } from "../../generated/prisma/enums";
 
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? "";
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET ?? "";
-const PUBLIC_BASE_URL = process.env.PUBLIC_BASE_URL ?? "http://localhost:5000";
+const CLIENT_BASE_URL = process.env.CLIENT_BASE_URL ?? "http://localhost:3000";
 const FLAT_FEE_GBP_RAW = process.env.FLAT_BOOKING_FEE_GBP ?? "15.00";
 
 export class StripeNotConfiguredError extends Error {
@@ -24,8 +24,8 @@ export const isStripeConfigured = (): boolean => {
 
 const stripeClient: Stripe | null = isStripeConfigured()
   ? new Stripe(STRIPE_SECRET_KEY, {
-      apiVersion: "2026-07-29.dahlia",
-    })
+    apiVersion: "2026-07-29.dahlia",
+  })
   : null;
 
 const flatFeePence = (): number => {
@@ -77,7 +77,7 @@ export const createTraderOnboardingLink = async (
 
   if (trader.stripeOnboarded) {
     return {
-      url: `${PUBLIC_BASE_URL}/trader/dashboard?stripe=already_onboarded`,
+      url: `${CLIENT_BASE_URL}/dashboard/stripe?stripe=already_onboarded`,
       accountId,
       alreadyOnboarded: true,
     };
@@ -85,13 +85,43 @@ export const createTraderOnboardingLink = async (
 
   const link = await stripeClient.accountLinks.create({
     account: accountId,
-    refresh_url: `${PUBLIC_BASE_URL}/api/v1/trader/stripe/refresh`,
-    return_url: `${PUBLIC_BASE_URL}/api/v1/trader/stripe/return`,
+    refresh_url: `${CLIENT_BASE_URL}/dashboard/stripe?stripe=refresh`,
+    return_url: `${CLIENT_BASE_URL}/dashboard/stripe?stripe=success`,
     type: "account_onboarding",
   });
 
   return { url: link.url, accountId, alreadyOnboarded: false };
 };
+
+export const syncTraderStripeStatus = async (traderId: string): Promise<boolean> => {
+  if (!stripeClient) return false;
+  try {
+    const trader = await prisma.trader.findUnique({
+      where: { id: traderId },
+      select: { stripeAccountId: true, stripeOnboarded: true },
+    });
+    if (!trader?.stripeAccountId || trader.stripeOnboarded) {
+      return trader?.stripeOnboarded ?? false;
+    }
+
+    const account = await stripeClient.accounts.retrieve(trader.stripeAccountId);
+    const onboarded = Boolean(
+      account.charges_enabled && account.payouts_enabled && account.details_submitted
+    );
+
+    if (onboarded) {
+      await prisma.trader.update({
+        where: { id: traderId },
+        data: { stripeOnboarded: true },
+      });
+      return true;
+    }
+  } catch (err) {
+    console.warn("Error syncing Stripe account status:", err);
+  }
+  return false;
+};
+
 
 export interface CheckoutResult {
   url: string;
@@ -160,8 +190,8 @@ export const createBookingCheckout = async (
       bookingId: booking.id,
       traderId: booking.trader.id,
     },
-    success_url: `${PUBLIC_BASE_URL}/booking/success?bookingId=${booking.id}`,
-    cancel_url: `${PUBLIC_BASE_URL}/booking/cancelled?bookingId=${booking.id}`,
+    success_url: `${CLIENT_BASE_URL}/booking/success?bookingId=${booking.id}`,
+    cancel_url: `${CLIENT_BASE_URL}/booking/cancelled?bookingId=${booking.id}`,
   });
 
   if (!session.url) {
@@ -322,7 +352,7 @@ const markSessionConfirmedByBooking = async (bookingId: string) => {
   });
 
   if (!booking) return;
-  
+
   await prisma.chatSession.updateMany({
     where: {
       channelType: booking.channelType,
