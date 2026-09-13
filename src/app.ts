@@ -1,11 +1,19 @@
 import express, { Application, NextFunction, Request, Response } from "express";
 import cors from "cors";
 import { indexRoute } from "./app/routes";
+import { webhookRoutes } from "./app/module/webhooks/webhook.routes";
 
 const app: Application = express();
 
 app.use(cors());
 app.use(express.urlencoded({ extended: true }));
+
+// Mount the Stripe webhook router BEFORE express.json() so the route-local
+// express.raw() receives the raw Buffer body (needed for signature verification).
+// If the global JSON parser runs first, req.body becomes a parsed object and the
+// controller rejects it with 400, silently breaking every webhook event.
+app.use("/api/v1/webhooks", webhookRoutes);
+
 app.use(express.json());
 
 
