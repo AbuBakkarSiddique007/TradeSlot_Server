@@ -7,6 +7,7 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY ?? "";
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET ?? "";
 const CLIENT_BASE_URL = process.env.CLIENT_BASE_URL ?? "http://localhost:3000";
 const FLAT_FEE_GBP_RAW = process.env.FLAT_BOOKING_FEE_GBP ?? "15.00";
+const FLAT_JOB_PRICE_GBP_RAW = process.env.FLAT_JOB_PRICE_GBP ?? "100.00";
 
 export class StripeNotConfiguredError extends Error {
   constructor() {
@@ -28,13 +29,19 @@ const stripeClient: Stripe | null = isStripeConfigured()
   })
   : null;
 
-const flatFeePence = (): number => {
+export const flatFeePence = (): number => {
   const n = Number(FLAT_FEE_GBP_RAW);
   if (!Number.isFinite(n) || n < 0) return 1500;
   return Math.round(n * 100);
 };
 
-const decimalFromPence = (pence: number): string => (pence / 100).toFixed(2);
+export const flatJobPricePence = (): number => {
+  const n = Number(FLAT_JOB_PRICE_GBP_RAW);
+  if (!Number.isFinite(n) || n <= 0) return 10000;
+  return Math.round(n * 100);
+};
+
+export const decimalFromPence = (pence: number): string => (pence / 100).toFixed(2);
 
 export interface OnboardingLinkResult {
   url: string;
@@ -154,9 +161,20 @@ export const createBookingCheckout = async (
     );
   }
 
-  const amount = flatFeePence();
-  const feePence = amount;
-  const traderPayout = 0;
+  const resolvedPence = (value: unknown, fallback: number): number => {
+    if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+      return Math.round(value * 100);
+    }
+    if (value !== null && value !== undefined) {
+      const asNumber = Number(value);
+      if (Number.isFinite(asNumber) && asNumber > 0) return Math.round(asNumber * 100);
+    }
+    return fallback;
+  };
+
+  const amount = resolvedPence(booking.totalPrice, flatJobPricePence());
+  const feePence = resolvedPence(booking.feeAmount, flatFeePence());
+  const traderPayout = Math.max(amount - feePence, 0);
 
   const session = await stripeClient.checkout.sessions.create({
     mode: "payment",

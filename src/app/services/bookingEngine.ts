@@ -1,11 +1,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { prisma } from "../lib/prisma";
-import { BookingStatus, ConversationState } from "../../generated/prisma/enums";
+import { BookingStatus, ChannelType, ConversationState } from "../../generated/prisma/enums";
 import { addMinutes, dateToMinutes, formatHHmm, startOfDay } from "./time";
 import { getAvailableSlots, isSlotAvailable } from "./bufferEngine";
+import { matchLocationToTrader, LocationMatch } from "./locationRouter";
 import { IReplyMessage, NormalizedMessage, ReplyOption, ButtonOption } from "./channels/types";
 import { InboundContext, updateSessionState } from "./inbox/inbound.service";
-import { createBookingCheckout, isStripeConfigured, StripeNotConfiguredError } from "./stripeService";
+import { createBookingCheckout, decimalFromPence, flatFeePence, flatJobPricePence, isStripeConfigured, StripeNotConfiguredError } from "./stripeService";
 
 export interface BookingEngineResult {
     reply: IReplyMessage;
@@ -17,10 +18,54 @@ export interface BookingEngineResult {
 
 const SLOT_CHIP_LIMIT = 5;
 const UNKNOWN_LOCATION = "Not provided";
-const PRICE_FALLBACK_GBP = "0.00";
-const FEE_FALLBACK_GBP = "0.00";
 
 const greet = (name?: string) => (name ? `Hi ${name}, ` : "Hi, ");
+
+const normalizePhone = (raw: string): string => raw.replace(/[^\d+]/g, "");
+
+const looksLikePhone = (raw: string): boolean => {
+    const digits = raw.replace(/\D/g, "");
+    return digits.length >= 7 && digits.length <= 15;
+};
+
+const attachCustomerPhone = async (
+    sessionId: string,
+    customerId: string | null,
+    phone: string,
+    name?: string | null,
+) => {
+    const normalizedPhone = normalizePhone(phone);
+    if (!normalizedPhone) return null;
+
+    const existing = await prisma.customer.findUnique({
+        where: { phone: normalizedPhone },
+        select: { id: true },
+    });
+
+    if (existing) {
+        await prisma.chatSession.update({
+            where: { id: sessionId },
+            data: { customerId: existing.id },
+        });
+        return existing.id;
+    }
+
+    if (customerId) {
+        return prisma.customer.update({
+            where: { id: customerId },
+            data: { phone: normalizedPhone, ...(name ? { name } : {}) },
+        });
+    }
+
+    const created = await prisma.customer.create({
+        data: { phone: normalizedPhone, name: name ?? null },
+    });
+    await prisma.chatSession.update({
+        where: { id: sessionId },
+        data: { customerId: created.id },
+    });
+    return created.id;
+};
 
 const buildSlotChips = (slots: Array<{ start: Date; end: Date }>): ReplyOption[] => {
     return slots.slice(0, SLOT_CHIP_LIMIT).map((s) => ({
@@ -148,7 +193,7 @@ export const handleIncomingMessage = async (
            
             if (hasServiceDetails(msg, metadata)) {
                 await updateSessionState(sessionId, ConversationState.AWAITING_SLOT_SELECTION, details);
-                return await offerSlotsReply(sessionId, messageId, details);
+                return await offerSlotsReply(sessionId, messageId, details, ctx.customerId, msg.channelType, msg.senderRef);
             }
 
             const missing: string[] = [];
@@ -228,11 +273,11 @@ export const handleIncomingMessage = async (
 
             delete nextMetadata.lastAskedFor;
             await updateSessionState(sessionId, ConversationState.AWAITING_SLOT_SELECTION, nextMetadata);
-            return await offerSlotsReply(sessionId, messageId, nextMetadata);
+            return await offerSlotsReply(sessionId, messageId, nextMetadata, ctx.customerId, msg.channelType, msg.senderRef);
         }
 
         case ConversationState.AWAITING_SLOT_SELECTION: {
-            return await offerSlotsReply(sessionId, messageId, metadata);
+            return await offerSlotsReply(sessionId, messageId, metadata, ctx.customerId, msg.channelType, msg.senderRef);
         }
 
         case ConversationState.OFFERED_SLOT: {
@@ -242,7 +287,7 @@ export const handleIncomingMessage = async (
 
             if (!traderId || Number.isNaN(start.getTime())) {
                 await updateSessionState(sessionId, ConversationState.AWAITING_SLOT_SELECTION, metadata);
-                return await offerSlotsReply(sessionId, messageId, metadata);
+                return await offerSlotsReply(sessionId, messageId, metadata, ctx.customerId, msg.channelType, msg.senderRef);
             }
 
             const stillFree = await isSlotAvailable(traderId, start);
@@ -314,6 +359,54 @@ export const handleIncomingMessage = async (
             };
         }
 
+        case ConversationState.AWAITING_CONTACT_DETAILS: {
+            const phoneRaw = msg.content.trim();
+
+            if (!looksLikePhone(phoneRaw)) {
+                return {
+                    sessionId,
+                    messageId,
+                    newState: ConversationState.AWAITING_CONTACT_DETAILS,
+                    reply: {
+                        text: "That doesn't look like a phone number. Could you type it again as digits, e.g. 07890 123456?",
+                    },
+                };
+            }
+
+            await attachCustomerPhone(
+                sessionId,
+                ctx.customerId,
+                phoneRaw,
+                (metadata.customerName as string | undefined) ?? msg.customerName ?? null,
+            );
+
+            const normalizedPhone = normalizePhone(phoneRaw);
+            await updateSessionState(sessionId, ConversationState.LEAD, {
+                ...metadata,
+                customerPhone: normalizedPhone,
+            });
+
+            return {
+                sessionId,
+                messageId,
+                newState: ConversationState.LEAD,
+                reply: {
+                    text: `Thanks — we've saved your enquiry. A trader covering ${metadata.customerLocation ?? "your area"} will call ${normalizedPhone} to arrange the job.`,
+                },
+            };
+        }
+
+        case ConversationState.LEAD: {
+            return {
+                sessionId,
+                messageId,
+                newState: ConversationState.LEAD,
+                reply: {
+                    text: "We've got your enquiry on the list — a trader will be in touch with you shortly.",
+                },
+            };
+        }
+
         case ConversationState.CONFIRMED: {
             return {
                 sessionId,
@@ -354,6 +447,9 @@ const offerSlotsReply = async (
     sessionId: string,
     messageId: string,
     metadata: Record<string, any>,
+    customerId: string | null,
+    channelType: ChannelType,
+    senderRef: string,
 ): Promise<BookingEngineResult> => {
 
     const trader = await pickTrader();
@@ -366,6 +462,28 @@ const offerSlotsReply = async (
                 text: "We don't have any tradespeople available right now. Please try again later.",
             },
         };
+    }
+
+    const location = (metadata.customerLocation as string | undefined)?.trim();
+    if (!location) {
+        await updateSessionState(sessionId, ConversationState.AWAITING_SERVICE_DETAILS, {
+            ...metadata,
+            lastAskedFor: "location",
+        });
+        return {
+            sessionId,
+            messageId,
+            newState: ConversationState.AWAITING_SERVICE_DETAILS,
+            reply: {
+                text: "Which postcode or area is the job in? That way I can confirm we cover it.",
+            },
+        };
+    }
+
+    const match = await matchLocationToTrader(trader.id, location, startOfDay(new Date()));
+
+    if (match.outcome === "OUT_OF_AREA" || match.outcome === "NO_ZONE") {
+        return startLeadFlow(sessionId, messageId, metadata, customerId, channelType, senderRef, match);
     }
 
     const availability = await getAvailableSlots(trader.id, startOfDay(new Date()));
@@ -397,6 +515,58 @@ const offerSlotsReply = async (
             text: "Here are the next available times — tap one to hold it:",
             options: chips,
             metadata: { traderId: trader.id },
+        },
+    };
+};
+
+const startLeadFlow = async (
+    sessionId: string,
+    messageId: string,
+    metadata: Record<string, any>,
+    customerId: string | null,
+    channelType: ChannelType,
+    senderRef: string,
+    match: LocationMatch,
+): Promise<BookingEngineResult> => {
+    const customerName = (metadata.customerName as string | undefined) ?? undefined;
+    const locationLabel = (metadata.customerLocation as string | undefined) ?? "your area";
+    const zoneLabel = match.zoneName ?? "today's zone";
+    const leadMetadata = {
+        ...metadata,
+        lead: true,
+        leadOutcome: match.outcome,
+        leadZoneName: match.zoneName ?? null,
+    };
+
+    if (channelType === ChannelType.WHATSAPP) {
+        const phone = normalizePhone(senderRef);
+        await attachCustomerPhone(sessionId, customerId, phone, customerName);
+        await updateSessionState(sessionId, ConversationState.LEAD, {
+            ...leadMetadata,
+            customerPhone: phone,
+        });
+        return {
+            sessionId,
+            messageId,
+            newState: ConversationState.LEAD,
+            reply: {
+                text: `${greet(customerName)}${zoneLabel} isn't covered right now, but we've saved your job (${locationLabel}) and a trader will call ${phone} to discuss it.`,
+            },
+        };
+    }
+
+    await updateSessionState(sessionId, ConversationState.AWAITING_CONTACT_DETAILS, {
+        ...leadMetadata,
+        customerPhone: null,
+        lastAskedFor: "phone",
+    });
+
+    return {
+        sessionId,
+        messageId,
+        newState: ConversationState.AWAITING_CONTACT_DETAILS,
+        reply: {
+            text: `${greet(customerName)}${zoneLabel} isn't covered right now — but I can pass your job to a trader anyway. What's the best phone number for them to reach you on?`,
         },
     };
 };
@@ -496,8 +666,8 @@ const createPendingBooking = async ({
             bufferMinutes: trader.defaultBufferTime,
             bufferedEndTime,
             status: BookingStatus.PAYMENT_PENDING,
-            totalPrice: PRICE_FALLBACK_GBP as any,
-            feeAmount: FEE_FALLBACK_GBP as any,
+            totalPrice: decimalFromPence(flatJobPricePence()) as any,
+            feeAmount: decimalFromPence(flatFeePence()) as any,
             currency: "gbp",
         },
     });

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { prisma } from "../../lib/prisma";
-import { ConversationState } from "../../../generated/prisma/enums";
+import { ChannelType, ConversationState } from "../../../generated/prisma/enums";
 import { NormalizedMessage } from "../channels/types";
 
 export interface InboundContext {
@@ -14,17 +14,44 @@ export interface InboundContext {
 export const ingestInboundMessage = async (
   msg: NormalizedMessage,
 ): Promise<InboundContext> => {
+  let customerId: string;
 
-  const customer = await prisma.customer.upsert({
-    where: { phone: msg.senderRef },
-    update: msg.customerName ? { name: msg.customerName } : {},
-    create: {
-      phone: msg.senderRef,
-      name: msg.customerName ?? null,
-    },
-  });
+  if (msg.channelType === ChannelType.WHATSAPP) {
+    const customer = await prisma.customer.upsert({
+      where: { phone: msg.senderRef },
+      update: msg.customerName ? { name: msg.customerName } : {},
+      create: {
+        phone: msg.senderRef,
+        name: msg.customerName ?? null,
+      },
+    });
+    customerId = customer.id;
+  } else {
+    const existingSession = await prisma.chatSession.findUnique({
+      where: {
+        channelType_senderRef: {
+          channelType: msg.channelType,
+          senderRef: msg.senderRef,
+        },
+      },
+      select: { customerId: true },
+    });
 
-  const customerId = customer.id;
+    if (existingSession?.customerId) {
+      customerId = existingSession.customerId;
+      if (msg.customerName) {
+        await prisma.customer.update({
+          where: { id: customerId },
+          data: { name: msg.customerName },
+        });
+      }
+    } else {
+      const created = await prisma.customer.create({
+        data: { phone: null, name: msg.customerName ?? null },
+      });
+      customerId = created.id;
+    }
+  }
 
 
   const session = await prisma.chatSession.upsert({
