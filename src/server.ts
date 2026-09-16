@@ -1,4 +1,14 @@
 import "dotenv/config";
+
+// Force the trading region's wall clock (Render presets TZ=UTC).
+const businessTz = process.env.BUSINESS_TZ || "Asia/Dhaka";
+try {
+    Intl.DateTimeFormat("en-US", { timeZone: businessTz }).format();
+    process.env.TZ = businessTz;
+} catch {
+    process.env.TZ = "Asia/Dhaka";
+}
+
 import app from "./app";
 import { prisma } from "./app/lib/prisma";
 

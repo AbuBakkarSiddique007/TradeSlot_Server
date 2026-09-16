@@ -1,4 +1,32 @@
+// Hosts (Render) preset TZ=UTC; force the trading region's wall clock.
+const resolveBusinessTz = (): string => {
+    const candidate = process.env.BUSINESS_TZ || "Asia/Dhaka";
+    try {
+        Intl.DateTimeFormat("en-US", { timeZone: candidate }).format();
+        return candidate;
+    } catch {
+        process.env.BUSINESS_TZ = "Asia/Dhaka";
+        return "Asia/Dhaka";
+    }
+};
+process.env.TZ = resolveBusinessTz();
+
 const MS_PER_MINUTE = 60_000;
+
+
+const BUSINESS_UTC_OFFSET_MINUTES = Number(process.env.BUSINESS_UTC_OFFSET_MINUTES ?? 360);
+
+
+export const utcDayKey = (date: Date): Date =>
+  new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+
+
+export const businessDay = (now: Date = new Date()): Date => {
+  const shifted = new Date(now.getTime() + BUSINESS_UTC_OFFSET_MINUTES * MS_PER_MINUTE);
+  return new Date(
+    Date.UTC(shifted.getUTCFullYear(), shifted.getUTCMonth(), shifted.getUTCDate()),
+  );
+};
 
 
 export const parseHHmm = (hhmm: string): number => {

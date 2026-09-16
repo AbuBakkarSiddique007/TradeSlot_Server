@@ -2,10 +2,12 @@ import { prisma } from "../lib/prisma";
 import { BookingStatus } from "../../generated/prisma/enums";
 import {
     addMinutes,
+    businessDay,
     endOfDay,
     formatHHmm,
     setTimeOnDate,
     startOfDay,
+    utcDayKey,
     SLOT_STEP_MINUTES,
 } from "./time";
 
@@ -49,7 +51,7 @@ const BLOCKING_STATUSES: BookingStatus[] = [
 
 const parseDateInput = (dateInput?: string | Date): Date => {
     if (dateInput instanceof Date) {
-        return startOfDay(dateInput);
+        return utcDayKey(dateInput);
     }
     if (typeof dateInput === "string" && dateInput.length > 0) {
         if (!/^\d{4}-\d{2}-\d{2}$/.test(dateInput)) {
@@ -58,7 +60,7 @@ const parseDateInput = (dateInput?: string | Date): Date => {
         const [y, m, d] = dateInput.split("-").map(Number);
         return new Date(y, m - 1, d, 0, 0, 0, 0);
     }
-    return startOfDay(new Date());
+    return businessDay();
 };
 
 const formatDate = (date: Date): string => {

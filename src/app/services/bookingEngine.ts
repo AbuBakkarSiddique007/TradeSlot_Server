@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { prisma } from "../lib/prisma";
 import { BookingStatus, ChannelType, ConversationState } from "../../generated/prisma/enums";
-import { addMinutes, dateToMinutes, formatHHmm, startOfDay } from "./time";
+import { addMinutes, businessDay, dateToMinutes, formatHHmm } from "./time";
 import { getAvailableSlots, isSlotAvailable } from "./bufferEngine";
 import { matchLocationToTrader, LocationMatch } from "./locationRouter";
 import { IReplyMessage, NormalizedMessage, ReplyOption, ButtonOption } from "./channels/types";
@@ -480,13 +480,13 @@ const offerSlotsReply = async (
         };
     }
 
-    const match = await matchLocationToTrader(trader.id, location, startOfDay(new Date()));
+    const match = await matchLocationToTrader(trader.id, location, businessDay());
 
     if (match.outcome === "OUT_OF_AREA" || match.outcome === "NO_ZONE") {
         return startLeadFlow(sessionId, messageId, metadata, customerId, channelType, senderRef, match);
     }
 
-    const availability = await getAvailableSlots(trader.id, startOfDay(new Date()));
+    const availability = await getAvailableSlots(trader.id, businessDay());
     const chips = buildSlotChips(availability.slots);
 
     if (chips.length === 0) {
@@ -576,7 +576,7 @@ const slotsOnlyReply = async (): Promise<{ options?: ReplyOption[]; metadata?: R
     const trader = await pickTrader();
 
     if (!trader) return {};
-    const availability = await getAvailableSlots(trader.id, startOfDay(new Date()));
+    const availability = await getAvailableSlots(trader.id, businessDay());
     return {
         options: buildSlotChips(availability.slots),
         metadata: { traderId: trader.id },

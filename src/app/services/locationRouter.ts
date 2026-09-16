@@ -1,5 +1,5 @@
 import { prisma } from "../lib/prisma";
-import { startOfDay } from "./time";
+import { utcDayKey } from "./time";
 
 export type LocationMatchOutcome = "IN_AREA" | "OUT_OF_AREA" | "NO_ZONE" | "UNKNOWN";
 
@@ -47,7 +47,7 @@ export const matchLocationToTrader = async (
     where: {
       traderId_date: {
         traderId,
-        date: startOfDay(date),
+        date: utcDayKey(date),
       },
     },
     select: { id: true, zoneName: true, postalCodes: true },

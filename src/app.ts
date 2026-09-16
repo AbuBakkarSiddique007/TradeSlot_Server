@@ -5,7 +5,12 @@ import { webhookRoutes } from "./app/module/webhooks/webhook.routes";
 
 const app: Application = express();
 
-app.use(cors());
+const clientOrigin = process.env.CLIENT_BASE_URL || "*";
+app.use(
+  cors({
+    origin: clientOrigin === "*" ? true : clientOrigin,
+  }),
+);
 app.use(express.urlencoded({ extended: true }));
 
 // Mount the Stripe webhook router BEFORE express.json() so the route-local

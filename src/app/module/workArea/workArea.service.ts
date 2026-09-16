@@ -1,4 +1,5 @@
 import { prisma } from "../../lib/prisma";
+import { businessDay } from "../../services/time";
 import { ISetWorkAreaInput } from "./workArea.interface";
 
 const normalizeDate = (dateStr?: string): Date => {
@@ -12,9 +13,7 @@ const normalizeDate = (dateStr?: string): Date => {
     return new Date(date.toISOString().split("T")[0]);
   }
 
-  const today = new Date();
-
-  return new Date(today.toISOString().split("T")[0]);
+  return businessDay();
 };
 
 
