@@ -82,6 +82,15 @@ pnpm dev   # http://localhost:5000 (code fallback: 4000)
 
 Verify with `GET /health` → `200 OK`.
 
+## Demo Trader
+
+On startup the server idempotently seeds a ready-to-use demo trader so testers can log in without any setup:
+
+- **Email:** `trader.ctg@tradeslot.com` — **Password:** `password123`
+- Pre-created (or preserved) Stripe Connect account, fully onboarded — no Stripe setup needed
+- Work-area zone + postal codes seeded for today & tomorrow (e.g. `Chattogram 4000,4100,…`), so the chat widget offers slots immediately
+- Logic lives in `src/app/lib/seedDemoTrader.ts` and runs at boot (failures are logged, never crash startup)
+
 ## Environment Variables
 
 | Variable                          | Required | Description                                                        |
@@ -153,6 +162,7 @@ src/
   app.ts                        # Express app, CORS (locked to CLIENT_BASE_URL)
   app/
     lib/prisma.ts               # PrismaClient + pg adapter
+    lib/seedDemoTrader.ts       # Idempotent demo trader + zone seed (runs at boot)
     routes/index.ts             # /api/v1 mount table
     middleware/auth.middleware.ts
     module/                     # Feature modules

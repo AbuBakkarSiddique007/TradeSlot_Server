@@ -11,11 +11,18 @@ try {
 
 import app from "./app";
 import { prisma } from "./app/lib/prisma";
+import { seedDemoTrader } from "./app/lib/seedDemoTrader";
 
 const port = Number(process.env.PORT) || 4000;
 
 const bootstrap = async () => {
   try {
+    try {
+      await seedDemoTrader();
+    } catch (error) {
+      console.warn("Demo trader seed failed:", error);
+    }
+
     const server = app.listen(port, () => {
       console.log(`Server is running on http://localhost:${port}`);
       console.log(`Health check available at http://localhost:${port}/health`);
