@@ -58,15 +58,16 @@ const parseDateInput = (dateInput?: string | Date): Date => {
             throw new Error(`Invalid date "${dateInput}". Expected YYYY-MM-DD.`);
         }
         const [y, m, d] = dateInput.split("-").map(Number);
-        return new Date(y, m - 1, d, 0, 0, 0, 0);
+        return new Date(Date.UTC(y, m - 1, d, 0, 0, 0, 0));
     }
     return businessDay();
 };
 
 const formatDate = (date: Date): string => {
-    const y = date.getFullYear();
-    const m = (date.getMonth() + 1).toString().padStart(2, "0");
-    const d = date.getDate().toString().padStart(2, "0");
+    const shifted = new Date(date.getTime() + 360 * 60_000);
+    const y = shifted.getUTCFullYear();
+    const m = (shifted.getUTCMonth() + 1).toString().padStart(2, "0");
+    const d = shifted.getUTCDate().toString().padStart(2, "0");
     return `${y}-${m}-${d}`;
 };
 

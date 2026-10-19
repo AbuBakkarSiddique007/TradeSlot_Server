@@ -5,12 +5,44 @@ import { webhookRoutes } from "./app/module/webhooks/webhook.routes";
 
 const app: Application = express();
 
-const clientOrigin = process.env.CLIENT_BASE_URL || "*";
+const defaultOrigins = [
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+  "http://localhost:3001",
+  "http://127.0.0.1:3001",
+];
+
+const envOrigins = (process.env.CLIENT_BASE_URL || "")
+  .split(",")
+  .map((origin) => origin.trim().replace(/\/+$/, ""))
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...defaultOrigins, ...envOrigins]));
+
 app.use(
   cors({
-    origin: clientOrigin === "*" ? true : clientOrigin,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+
+      const normalizedOrigin = origin.replace(/\/+$/, "");
+
+      if (
+        process.env.CLIENT_BASE_URL === "*" ||
+        allowedOrigins.includes(normalizedOrigin) ||
+        /\.vercel\.app$/.test(new URL(origin).hostname)
+      ) {
+        return callback(null, true);
+      }
+
+      return callback(null, true);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With"],
+    optionsSuccessStatus: 200,
   }),
 );
+
 app.use(express.urlencoded({ extended: true }));
 
 // Mount the Stripe webhook router BEFORE express.json() so the route-local
@@ -36,9 +68,7 @@ app.get("/", (_req: Request, res: Response) => {
   });
 });
 
-// API Routes:
 app.use("/api/v1", indexRoute);
-
 
 app.use((req: Request, res: Response) => {
   res.status(404).json({
@@ -47,8 +77,6 @@ app.use((req: Request, res: Response) => {
   });
 });
 
-
-//Global Error Handler:
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
   console.error("Unhandled Error:", err);

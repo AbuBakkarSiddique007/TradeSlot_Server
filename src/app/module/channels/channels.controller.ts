@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { getChannels } from "../../services/channels";
 import { ingestInboundMessage } from "../../services/inbox/inbound.service";
 import { handleIncomingMessage } from "../../services/bookingEngine";
+import { getActiveCoverage } from "../../services/locationRouter";
 
 const WEBHOOK_DEBUG_LOG = "/tmp/tradeslot-wa-webhook.log";
 
@@ -112,9 +113,22 @@ const receiveWhatsApp = async (req: Request, res: Response, next: NextFunction) 
   }
 };
 
+const getCoverage = async (_req: Request, res: Response, next: NextFunction) => {
+  try {
+    const coverage = await getActiveCoverage();
+    return res.status(200).json({
+      success: true,
+      coverage,
+    });
+  } catch (error) {
+    return next(error);
+  }
+};
+
 export const channelsController = {
   logWebhook,
   verifyWhatsAppWebhook,
   receiveWebchat,
   receiveWhatsApp,
+  getCoverage,
 };

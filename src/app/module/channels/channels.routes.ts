@@ -15,6 +15,9 @@ router.use((req, _res, next) => {
     next();
 });
 
+// Coverage inquiry
+router.get("/coverage", channelsController.getCoverage);
+
 // Webchat
 router.post("/webchat/message", channelsController.receiveWebchat);
 

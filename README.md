@@ -111,6 +111,8 @@ On startup the server idempotently seeds a ready-to-use demo trader so testers c
 | `WHATSAPP_ACCESS_TOKEN`           | No       | Meta system-user access token                                      |
 | `WHATSAPP_WEBHOOK_VERIFY_TOKEN`   | No       | Webhook GET verification token                                     |
 | `WHATSAPP_APP_SECRET`             | No       | Meta app secret (webhook signatures, later phase)                  |
+| `GEMINI_API_KEY`                  | No       | Google Gemini API key (primary conversational AI layer)             |
+| `GROQ_API_KEY`                    | No       | Groq API key (fallback conversational AI layer)                    |
 
 ¹ `PORT` defaults to `5000` from `.env` or `4000` in code fallback.
 
@@ -145,6 +147,7 @@ Base: `/api/v1`
 | `GET`    | `/trader/stripe/return`           | Public  | Connect onboarding return (before auth router)     |
 | `GET`    | `/trader/stripe/refresh`          | Public  | Connect onboarding refresh link                    |
 | `GET`    | `/trader/leads`                   | Trader  | Out-of-area / no-zone leads                        |
+| `GET`    | `/channels/coverage`              | Public  | Current active operating zone and postal codes     |
 | `POST`   | `/channels/webchat/message`       | Public  | Webchat inbound message → booking engine           |
 | `GET`    | `/channels/whatsapp/message`      | Public  | WhatsApp webhook verification handshake            |
 | `POST`   | `/channels/whatsapp/message`      | Public  | WhatsApp inbound message → booking engine          |
@@ -159,7 +162,7 @@ Base: `/api/v1`
 ```text
 src/
   server.ts                     # Bootstrap, timezone pin
-  app.ts                        # Express app, CORS (locked to CLIENT_BASE_URL)
+  app.ts                        # Express app, dynamic CORS policy
   app/
     lib/prisma.ts               # PrismaClient + pg adapter
     lib/seedDemoTrader.ts       # Idempotent demo trader + zone seed (runs at boot)
@@ -169,11 +172,12 @@ src/
       auth/       register, login, me
       workArea/   zones + postal codes per day
       availability/ slot computation
-      channels/    webchat + WhatsApp adapters
+      channels/    webchat + WhatsApp adapters, coverage
       stripe/      Connect onboarding + checkout
       webhooks/    Stripe event handler
       leads/       out-of-area capture
     services/
+      ai/                Gemini + Groq AI provider & intent extraction
       time.ts            business-day key + TZ pin
       bookingEngine.ts   conversation state machine
       bufferEngine.ts    slot buffering / overlap guard

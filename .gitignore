@@ -12,3 +12,6 @@ src/generated/prisma
 
 # Local test/debug artifacts
 /tmp/tradeslot-mock-wa-outbox.log
+
+# Temporary test scripts
+scripts/

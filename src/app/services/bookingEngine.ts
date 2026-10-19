@@ -3,10 +3,11 @@ import { prisma } from "../lib/prisma";
 import { BookingStatus, ChannelType, ConversationState } from "../../generated/prisma/enums";
 import { addMinutes, businessDay, dateToMinutes, formatHHmm } from "./time";
 import { getAvailableSlots, isSlotAvailable } from "./bufferEngine";
-import { matchLocationToTrader, LocationMatch } from "./locationRouter";
+import { matchLocationToTrader, LocationMatch, getActiveCoverage } from "./locationRouter";
 import { IReplyMessage, NormalizedMessage, ReplyOption, ButtonOption } from "./channels/types";
 import { InboundContext, updateSessionState } from "./inbox/inbound.service";
 import { createBookingCheckout, decimalFromPence, flatFeePence, flatJobPricePence, isStripeConfigured, StripeNotConfiguredError } from "./stripeService";
+import { extractFromMessage, rephraseReply, ExtractedIntent } from "./ai/aiConversation";
 
 export interface BookingEngineResult {
     reply: IReplyMessage;
@@ -21,7 +22,21 @@ const UNKNOWN_LOCATION = "Not provided";
 
 const greet = (name?: string) => (name ? `Hi ${name}, ` : "Hi, ");
 
-const normalizePhone = (raw: string): string => raw.replace(/[^\d+]/g, "");
+const formatServiceForPrompt = (service?: string | null): string => {
+    if (!service) return "job";
+    const trimmed = service.replace(/^(my|a|an|the)\s+/i, "").trim();
+    if (trimmed.length > 25 || /\b(is|are|has|broken|leaking|stopped)\b/i.test(trimmed)) {
+        return "job";
+    }
+    return trimmed;
+};
+
+const normalizePhone = (raw: string): string => {
+    let clean = raw.replace(/[^\d+]/g, "");
+    if (clean.startsWith("+880")) clean = "0" + clean.slice(4);
+    if (clean.startsWith("880")) clean = "0" + clean.slice(3);
+    return clean;
+};
 
 const looksLikePhone = (raw: string): boolean => {
     const digits = raw.replace(/\D/g, "");
@@ -75,15 +90,29 @@ const buildSlotChips = (slots: Array<{ start: Date; end: Date }>): ReplyOption[]
     }));
 };
 
+const BD_POSTCODE_REGEX = /\b(1[0-3]\d{2}|4[0-3]\d{2}|[1-9]\d{3})\b/;
 const UK_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?\s*\d[A-Z]{2})\b/i;
-const AREA_KEYWORDS_REGEX = /\b(GEC|Khulshi|Agrabad|Nasirabad|Halishahar|Panchlaish|Muradpur|Bahaddarhat|London|Battersea|Clapham|Islington|Camden|Manchester|Salford|Birmingham|Westminster)\b/i;
+const AREA_KEYWORDS_REGEX =
+    /\b(GEC|Khulshi|Agrabad|Nasirabad|Halishahar|Panchlaish|Muradpur|Bahaddarhat|Chawkbazar|Chandgaon|Kotwali|Patenga|Lalkhan\s*Bazar|Anderkilla|Gulshan|Banani|Dhanmondi|Mirpur|Uttara|Mohammadpur|Badda|Motijheel|Bashundhara|Mohakhali|Tejgaon|Lalmatia|Shantinagar|Malibagh|Rampura|Khilgaon|Baridhara|Chattogram|Chittagong|Dhaka|Sylhet|London|Camden|Battersea)\b/i;
 const GENERIC_POSTCODE_REGEX = /\b([A-Z]{1,2}\d[A-Z\d]?|\d{4})\b/i;
 
 const extractFromText = (text: string) => {
     if (!text) return { location: null, service: null };
     const trimmed = text.trim();
 
+    // 1. Check Bangladesh 4-digit postcode (e.g. 4000, 1205)
+    const bdMatch = trimmed.match(BD_POSTCODE_REGEX);
+    if (bdMatch && bdMatch[1]) {
+        const loc = bdMatch[1].trim();
+        const srv = trimmed
+            .replace(bdMatch[0], "")
+            .replace(/\b(at|in|near|postcode|address|location|for)\b/gi, "")
+            .replace(/,\s*$/, "")
+            .trim();
+        return { location: loc, service: srv.length > 2 ? srv : null };
+    }
 
+    // 2. Check UK postcode
     const ukMatch = trimmed.match(UK_POSTCODE_REGEX);
     if (ukMatch && ukMatch[1]) {
         const loc = ukMatch[1].trim();
@@ -95,7 +124,7 @@ const extractFromText = (text: string) => {
         return { location: loc, service: srv.length > 2 ? srv : null };
     }
 
-
+    // 3. Check area keywords (Chattogram, Dhaka, etc.)
     const areaMatch = trimmed.match(AREA_KEYWORDS_REGEX);
     if (areaMatch && areaMatch[1]) {
         const loc = areaMatch[1].trim();
@@ -106,7 +135,6 @@ const extractFromText = (text: string) => {
             .trim();
         return { location: loc, service: srv.length > 2 ? srv : null };
     }
-
 
     const prefixMatch = trimmed.match(GENERIC_POSTCODE_REGEX);
     if (prefixMatch && prefixMatch[1] && /\b(at|in|near)\s+/i.test(trimmed)) {
@@ -122,37 +150,48 @@ const extractFromText = (text: string) => {
     return { location: null, service: null };
 };
 
-const hasServiceDetails = (msg: NormalizedMessage, metadata: Record<string, any> | null) => {
-    const extracted = extractFromText(msg.content);
-    const inlineLocation = msg.customerLocation?.trim() || extracted.location;
-    const inlineService = msg.serviceDescription?.trim() || extracted.service;
-    const metaLocation = (metadata?.customerLocation as string | undefined)?.trim();
-    const metaService = (metadata?.serviceDescription as string | undefined)?.trim();
-
-    return Boolean(
-        (inlineLocation && inlineService) ||
-        (inlineLocation && metaService) ||
-        (inlineService && metaLocation) ||
-        (metaLocation && metaService),
-    );
+const isGreetingOrQuestion = (text: string): boolean => {
+    const t = text.trim();
+    if (/^(hi|hello|hey|good morning|good afternoon|good evening|salam|assalamu alaikum)\b/i.test(t)) return true;
+    if (/(how does (this|it|tradeslot|everything|platform) work|how to work|how it works|what (is this|do you do|services|is tradeslot)|how much|pricing|price|cost|fee|features?|buffer|who are you|can you help|which (areas|regions|locations|zones))\b/i.test(t)) return true;
+    if (/^\s*(how|what|why|who|when|where|is it|can you|are you)\b/i.test(t) && !/\b(plumber|electrician|repair|leak|pipe|boiler|paint|clean|ac|wiring|tap|generator)\b/i.test(t)) return true;
+    if (t.endsWith("?") && !/\b(plumber|electrician|repair|leak|pipe|boiler|paint|clean|ac|wiring|tap|generator)\b/i.test(t)) return true;
+    return false;
 };
 
-const mergeServiceDetails = (msg: NormalizedMessage, metadata: Record<string, any> | null) => {
+const mergeServiceDetails = (
+    msg: NormalizedMessage,
+    metadata: Record<string, any> | null,
+    aiExtracted?: ExtractedIntent,
+) => {
     const extracted = extractFromText(msg.content);
+    const content = msg.content.trim();
+    const isChitchat = aiExtracted
+        ? aiExtracted.intent === "greeting" || aiExtracted.intent === "question"
+        : isGreetingOrQuestion(content);
+
     return {
-        customerName: msg.customerName ?? (metadata?.customerName as string | undefined),
+        customerName:
+            aiExtracted?.customerName ??
+            msg.customerName ??
+            (metadata?.customerName as string | undefined),
         customerLocation:
+            aiExtracted?.customerLocation?.trim() ??
             msg.customerLocation?.trim() ??
             extracted.location ??
             (metadata?.customerLocation as string | undefined) ??
             null,
-
         serviceDescription:
+            aiExtracted?.serviceDescription?.trim() ??
             msg.serviceDescription?.trim() ??
             extracted.service ??
             (metadata?.serviceDescription as string | undefined) ??
-            (msg.content.trim().length > 3 && !extracted.location ? msg.content.trim() : null),
+            (!isChitchat && content.length > 3 && !extracted.location ? content : null),
     };
+};
+
+const hasServiceDetails = (details: { customerLocation?: string | null; serviceDescription?: string | null }) => {
+    return Boolean(details.customerLocation && details.serviceDescription);
 };
 
 const pickTrader = async (): Promise<{ id: string; defaultJobDuration: number; defaultBufferTime: number } | null> => {
@@ -184,14 +223,109 @@ export const handleIncomingMessage = async (
 ): Promise<BookingEngineResult> => {
     const currentState = ctx.state ?? ConversationState.INITIAL;
     const metadata = ctx.metadata ?? {};
+
+    // 1. AI Intent & Entity Extraction with Active Coverage Context
+    const activeCoverage = await getActiveCoverage();
+    const aiExtracted = await extractFromMessage(msg.content, {
+        currentState,
+        metadata,
+        activeCoverage,
+    });
+
+    if (aiExtracted.customerName && !msg.customerName) {
+        msg.customerName = aiExtracted.customerName;
+    }
+    if (aiExtracted.customerLocation && !msg.customerLocation) {
+        msg.customerLocation = aiExtracted.customerLocation;
+    }
+    if (aiExtracted.serviceDescription && !msg.serviceDescription) {
+        msg.serviceDescription = aiExtracted.serviceDescription;
+    }
+
+    if (aiExtracted.customerName && ctx.customerId) {
+        try {
+            await prisma.customer.update({
+                where: { id: ctx.customerId },
+                data: { name: aiExtracted.customerName },
+            });
+        } catch {
+            /* ignore */
+        }
+    }
+
+    // 2. Execute State Machine Transition
+    const result = await processStateTransition(msg, ctx, currentState, metadata, aiExtracted);
+
+    // 3. AI Reply Polishing (if applicable)
+    if (result.reply && result.reply.text) {
+        result.reply.text = await rephraseReply(result.reply.text, {
+            customerName: (metadata.customerName as string | undefined) ?? msg.customerName ?? null,
+            currentState: result.newState,
+        });
+    }
+
+    return result;
+};
+
+const processStateTransition = async (
+    msg: NormalizedMessage,
+    ctx: InboundContext,
+    currentState: ConversationState,
+    metadata: Record<string, any>,
+    aiExtracted: ExtractedIntent,
+): Promise<BookingEngineResult> => {
     const sessionId = ctx.sessionId;
     const messageId = ctx.messageId;
 
     switch (currentState) {
         case ConversationState.INITIAL: {
-            const details = mergeServiceDetails(msg, metadata);
-           
-            if (hasServiceDetails(msg, metadata)) {
+            const details = mergeServiceDetails(msg, metadata, aiExtracted);
+
+            // Friendly AI greeting / FAQ reply if user is greeting or asking questions without job info
+            const isQuestionOrGreeting =
+                aiExtracted.intent === "greeting" ||
+                aiExtracted.intent === "question" ||
+                isGreetingOrQuestion(msg.content);
+
+            if (isQuestionOrGreeting && !details.customerLocation && !details.serviceDescription) {
+                const lower = msg.content.toLowerCase();
+                let answerText = aiExtracted.assistantResponse;
+                const buttons: ButtonOption[] = [];
+
+                if (!answerText) {
+                    if (/price|pricing|cost|fee|rate/i.test(lower)) {
+                        answerText = "TradeSlot features 100% transparent pricing with zero subscription lock-ins or lead bidding. Tradespeople only pay a flat £15 platform fee per confirmed booking, while customers get clear upfront quotes. View our live pricing breakdown below!";
+                    } else if (/feature|buffer|capability/i.test(lower)) {
+                        answerText = "TradeSlot is built around 4 core features: 1) Automated 30-minute travel buffers after each job to eliminate late arrivals. 2) Dual instant booking via Webchat & WhatsApp. 3) Daily territory geofencing. 4) Direct bank payouts via Stripe Connect.";
+                    } else if (/work|step|how/i.test(lower)) {
+                        answerText = "TradeSlot makes booking trusted trades effortless: 1) Describe your service & location. 2) Pick an available guaranteed time slot. 3) A vetted tradesperson arrives on schedule! What trade service do you need help with today?";
+                    } else if (/area|cover|region|zone/i.test(lower)) {
+                        answerText = "We actively dispatch trades in designated zones (including Chattogram and Dhaka) with nationwide coverage for custom enquiries. Tell us your job and area or postcode to get started!";
+                    } else {
+                        answerText = "Hello! I am your TradeSlot booking assistant. What trade service do you need help with and what is your location or area?";
+                    }
+                }
+
+                if (/price|pricing|cost|fee/i.test(lower)) {
+                    buttons.push({ id: "nav_pricing", label: "View Pricing Page", description: "/pricing" });
+                } else if (/work|how/i.test(lower)) {
+                    buttons.push({ id: "nav_how_it_works", label: "How It Works Guide", description: "/how-it-works" });
+                } else if (/feature|buffer/i.test(lower)) {
+                    buttons.push({ id: "nav_features", label: "Explore Platform Features", description: "/features" });
+                }
+
+                return {
+                    sessionId,
+                    messageId,
+                    newState: ConversationState.INITIAL,
+                    reply: {
+                        text: answerText,
+                        ...(buttons.length > 0 ? { buttons } : {}),
+                    },
+                };
+            }
+
+            if (hasServiceDetails(details)) {
                 await updateSessionState(sessionId, ConversationState.AWAITING_SLOT_SELECTION, details);
                 return await offerSlotsReply(sessionId, messageId, details, ctx.customerId, msg.channelType, msg.senderRef);
             }
@@ -205,40 +339,66 @@ export const handleIncomingMessage = async (
                 lastAskedFor: askFor,
             });
 
+            const promptText =
+                missing.length === 2
+                    ? `${greet(msg.customerName)}could you tell me what job you need done and your postcode or area?`
+                    : missing[0] === "location"
+                        ? `${greet(msg.customerName)}what's the address or postcode for the ${formatServiceForPrompt(details.serviceDescription)}?`
+                        : `${greet(msg.customerName)}could you describe the work needed in ${details.customerLocation ?? "your area"}?`;
+
             return {
                 sessionId,
                 messageId,
                 newState: ConversationState.AWAITING_SERVICE_DETAILS,
                 reply: {
-                    text:
-                        missing.length === 2
-                            ? `${greet(msg.customerName)}could you tell me the job you need done and where it's located?`
-                            : missing[0] === "location"
-                                ? `${greet(msg.customerName)}what's the address or postcode for the job?`
-                                : `${greet(msg.customerName)}could you describe the work you need done?`,
+                    text: promptText,
                     metadata: { lastAskedFor: askFor },
                 },
             };
         }
 
         case ConversationState.AWAITING_SERVICE_DETAILS: {
-            const details = mergeServiceDetails(msg, metadata);
+            const details = mergeServiceDetails(msg, metadata, aiExtracted);
             const lastAskedFor = (metadata.lastAskedFor as string | undefined) ?? "location";
             const inlineLocation = msg.customerLocation?.trim();
             const inlineService = msg.serviceDescription?.trim();
             const trimmedContent = msg.content.trim();
             const nextMetadata: Record<string, any> = { ...details };
 
+            const isQuestion =
+                aiExtracted.intent === "greeting" ||
+                aiExtracted.intent === "question" ||
+                isGreetingOrQuestion(trimmedContent);
+
+            if (isQuestion && !inlineLocation && !inlineService) {
+                const answerText =
+                    aiExtracted.assistantResponse ||
+                    "TradeSlot matches you with verified local tradespeople with protected 30-minute travel buffers.";
+                const promptBack =
+                    lastAskedFor === "location"
+                        ? `${answerText}\n\nTo match you with available slots, which area or postcode is your job in?`
+                        : `${answerText}\n\nTo find you the right technician, what trade service do you need done?`;
+                return {
+                    sessionId,
+                    messageId,
+                    newState: ConversationState.AWAITING_SERVICE_DETAILS,
+                    reply: {
+                        text: promptBack,
+                        metadata: nextMetadata,
+                    },
+                };
+            }
+
             if (lastAskedFor === "location") {
                 if (inlineLocation || details.customerLocation) {
                     nextMetadata.customerLocation = inlineLocation || details.customerLocation;
-                } else if (trimmedContent) {
+                } else if (trimmedContent && !isQuestion) {
                     nextMetadata.customerLocation = trimmedContent;
                 }
             } else {
                 if (inlineService || details.serviceDescription) {
                     nextMetadata.serviceDescription = inlineService || details.serviceDescription;
-                } else if (trimmedContent) {
+                } else if (trimmedContent && !isQuestion) {
                     nextMetadata.serviceDescription = trimmedContent;
                 }
             }
@@ -251,7 +411,7 @@ export const handleIncomingMessage = async (
                     messageId,
                     newState: ConversationState.AWAITING_SERVICE_DETAILS,
                     reply: {
-                        text: "Thanks — and what's the address or postcode for the job?",
+                        text: `Thanks${nextMetadata.customerName ? ` ${nextMetadata.customerName}` : ""} — what's the address or postcode for the ${formatServiceForPrompt(nextMetadata.serviceDescription)}?`,
                         metadata: nextMetadata,
                     },
                 };
@@ -265,7 +425,7 @@ export const handleIncomingMessage = async (
                     messageId,
                     newState: ConversationState.AWAITING_SERVICE_DETAILS,
                     reply: {
-                        text: "Got it. Could you describe the work needed in a sentence or two?",
+                        text: `Got it${nextMetadata.customerLocation ? ` for ${nextMetadata.customerLocation}` : ""}. Could you describe the work needed in a sentence or two?`,
                         metadata: nextMetadata,
                     },
                 };
@@ -283,7 +443,42 @@ export const handleIncomingMessage = async (
         case ConversationState.OFFERED_SLOT: {
             const traderId = (metadata.traderId as string | undefined) ?? null;
             const slotId = msg.content.trim();
-            const start = new Date(slotId);
+            let start = new Date(slotId);
+
+            // Natural language slot resolution
+            const offeredSlots = (metadata.offeredSlots as Array<{ id: string; label: string }> | undefined) ?? [];
+            if (Number.isNaN(start.getTime()) && offeredSlots.length > 0) {
+                const preference = (aiExtracted.slotPreference || msg.content).toLowerCase().trim();
+
+                // Check by ordinal / index
+                if (/^(1|first|1st)\b/.test(preference) && offeredSlots[0]) {
+                    start = new Date(offeredSlots[0].id);
+                } else if (/^(2|second|2nd)\b/.test(preference) && offeredSlots[1]) {
+                    start = new Date(offeredSlots[1].id);
+                } else if (/^(3|third|3rd)\b/.test(preference) && offeredSlots[2]) {
+                    start = new Date(offeredSlots[2].id);
+                } else if (/^(4|fourth|4th)\b/.test(preference) && offeredSlots[3]) {
+                    start = new Date(offeredSlots[3].id);
+                } else if (/^(5|fifth|5th)\b/.test(preference) && offeredSlots[4]) {
+                    start = new Date(offeredSlots[4].id);
+                } else {
+                    // Match by time string like "10:00" or "10" or "10am"
+                    const timeMatch = preference.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/);
+                    if (timeMatch) {
+                        let hour = parseInt(timeMatch[1], 10);
+                        const isPm = timeMatch[3] === "pm";
+                        const isAm = timeMatch[3] === "am";
+                        if (isPm && hour < 12) hour += 12;
+                        if (isAm && hour === 12) hour = 0;
+                        const hourStr = String(hour).padStart(2, "0");
+
+                        const matched = offeredSlots.find((s) => s.label.startsWith(hourStr) || s.label.includes(`${hour}:00`) || s.label.includes(`${hourStr}:`));
+                        if (matched) {
+                            start = new Date(matched.id);
+                        }
+                    }
+                }
+            }
 
             if (!traderId || Number.isNaN(start.getTime())) {
                 await updateSessionState(sessionId, ConversationState.AWAITING_SLOT_SELECTION, metadata);
@@ -360,7 +555,7 @@ export const handleIncomingMessage = async (
         }
 
         case ConversationState.AWAITING_CONTACT_DETAILS: {
-            const phoneRaw = msg.content.trim();
+            const phoneRaw = aiExtracted.customerPhone ?? msg.content.trim();
 
             if (!looksLikePhone(phoneRaw)) {
                 return {
@@ -368,7 +563,7 @@ export const handleIncomingMessage = async (
                     messageId,
                     newState: ConversationState.AWAITING_CONTACT_DETAILS,
                     reply: {
-                        text: "That doesn't look like a phone number. Could you type it again as digits, e.g. 07890 123456?",
+                        text: "That doesn't look like a phone number. Could you type it again as digits, e.g. 01712 345678?",
                     },
                 };
             }
@@ -505,6 +700,7 @@ const offerSlotsReply = async (
         ...metadata,
         traderId: trader.id,
         offeredAt: new Date().toISOString(),
+        offeredSlots: chips.map((c) => ({ id: c.id, label: c.label })),
     });
 
     return {
@@ -530,13 +726,14 @@ const startLeadFlow = async (
 ): Promise<BookingEngineResult> => {
     const customerName = (metadata.customerName as string | undefined) ?? undefined;
     const locationLabel = (metadata.customerLocation as string | undefined) ?? "your area";
-    const zoneLabel = match.zoneName ?? "today's zone";
     const leadMetadata = {
         ...metadata,
         lead: true,
         leadOutcome: match.outcome,
         leadZoneName: match.zoneName ?? null,
     };
+
+    const zoneInfo = match.zoneName ? `in ${match.zoneName}` : "in today's scheduled zone";
 
     if (channelType === ChannelType.WHATSAPP) {
         const phone = normalizePhone(senderRef);
@@ -550,7 +747,7 @@ const startLeadFlow = async (
             messageId,
             newState: ConversationState.LEAD,
             reply: {
-                text: `${greet(customerName)}${zoneLabel} isn't covered right now, but we've saved your job (${locationLabel}) and a trader will call ${phone} to discuss it.`,
+                text: `${greet(customerName)}our tradespeople are currently dispatching ${zoneInfo}, so ${locationLabel} is outside today's instant-booking slots. We've saved your enquiry and a trader will call ${phone} to arrange the job!`,
             },
         };
     }
@@ -566,7 +763,7 @@ const startLeadFlow = async (
         messageId,
         newState: ConversationState.AWAITING_CONTACT_DETAILS,
         reply: {
-            text: `${greet(customerName)}${zoneLabel} isn't covered right now — but I can pass your job to a trader anyway. What's the best phone number for them to reach you on?`,
+            text: `${greet(customerName)}our tradespeople are currently dispatching ${zoneInfo}, so ${locationLabel} is outside today's instant-booking slots — but I can pass your job to a trader anyway! What's the best phone number for them to reach you on?`,
         },
     };
 };
